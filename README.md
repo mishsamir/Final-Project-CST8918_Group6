@@ -67,11 +67,11 @@ This project demonstrates a complete Infrastructure as Code (IaC) solution for d
 
 This project is specifically designed for Azure for Students subscriptions:
 
-- ✅ **Region**: Canada Central (policy compliant)
-- ✅ **SKUs**: Basic/Standard tiers only
-- ✅ **Cost-optimized**: Minimal node counts and sizes
-- ✅ **Tagging**: Required ProjectName tags included
-- ✅ **Public IP Policy**: Uses standard load balancers without policy conflicts
+- **Region**: Canada Central (policy compliant)
+- **SKUs**: Basic/Standard tiers only
+- **Cost-optimized**: Minimal node counts and sizes
+- **Tagging**: Required ProjectName tags included
+- **Public IP Policy**: Uses standard load balancers without policy conflicts
 
 ## 📋 Prerequisites
 
@@ -175,14 +175,14 @@ terraform destroy
 
 ## 📚 Learning Objectives Demonstrated
 
-1. ✅ Infrastructure as Code with Terraform
-2. ✅ Modular architecture design
-3. ✅ Azure Kubernetes Service deployment
-4. ✅ Container registry management
-5. ✅ Multi-environment setup (test/prod)
-6. ✅ Azure policy compliance
-7. ✅ Git branching and version control
-8. ✅ Documentation and best practices
+1.  Infrastructure as Code with Terraform
+2.  Modular architecture design
+3.  Azure Kubernetes Service deployment
+4.  Container registry management
+5.  Multi-environment setup (test/prod)
+6.  Azure policy compliance
+7. Git branching and version control
+8.  Documentation and best practices
 
 ---
 
