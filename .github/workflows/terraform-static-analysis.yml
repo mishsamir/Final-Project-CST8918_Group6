@@ -1,0 +1,66 @@
+name: 'Terraform Static Tests'
+
+on:
+  push:
+
+defaults:
+  run:
+    working-directory: ./infra/
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  terraform-static-tests:
+    name: 'Terraform Static Tests'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        terraform-dir: 
+          - '.'           # Root infra directory
+          - 'aks'         # AKS module
+          - 'network'     # Network module  
+          - 'backend'     # Backend module
+          - 'remix-weather' # Remix Weather module
+      fail-fast: false  # Continue testing other modules even if one fails
+    
+    steps:
+    # Checkout the repository to the GitHub Actions runner
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    # Install the latest version of Terraform CLI and configure the Terraform CLI configuration file with a Terraform Cloud user API token
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+
+    # Initialize a new or existing Terraform working directory by creating initial files, loading any remote state, downloading modules, etc.
+    # The -backend=false flag is used to prevent Terraform from using the remote backend, which is not needed for static tests.
+    - name: Terraform Init (${{ matrix.terraform-dir }})
+      run: terraform init -backend=false
+      working-directory: ./infra/${{ matrix.terraform-dir == '.' && '' || matrix.terraform-dir }}
+
+    # Validate terraform files
+    - name: Terraform Validate (${{ matrix.terraform-dir }})
+      run: terraform validate
+      working-directory: ./infra/${{ matrix.terraform-dir == '.' && '' || matrix.terraform-dir }}
+
+    # Checks that all Terraform configuration files adhere to a canonical format
+    # Note: This will not modify files, but will exit with a non-zero status if any files need formatting
+    - name: Terraform Format (${{ matrix.terraform-dir }})
+      run: terraform fmt -check -recursive
+      working-directory: ./infra/${{ matrix.terraform-dir == '.' && '' || matrix.terraform-dir }}
+
+    # Perform a security scan of the terraform code tfsec
+    - name: tfsec (${{ matrix.terraform-dir }})
+      uses: tfsec/tfsec-sarif-action@master
+      with:
+        sarif_file: tfsec-${{ matrix.terraform-dir == '.' && 'root' || matrix.terraform-dir }}.sarif
+        working_directory: ./infra/${{ matrix.terraform-dir == '.' && '' || matrix.terraform-dir }}
+
+    - name: Upload SARIF file (${{ matrix.terraform-dir }})
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        # Path to SARIF file relative to the root of the repository
+        sarif_file: tfsec-${{ matrix.terraform-dir == '.' && 'root' || matrix.terraform-dir }}.sarif

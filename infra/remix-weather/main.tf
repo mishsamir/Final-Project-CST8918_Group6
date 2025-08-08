@@ -16,14 +16,14 @@ resource "azurerm_container_registry" "acr" {
 
 # Azure Cache for Redis - Test Environment
 resource "azurerm_redis_cache" "test" {
-  name                = "remix-weather-redis-test"
-  location            = var.location
-  resource_group_name = var.resource_group_name
-  capacity            = 0
-  family              = "C"
-  sku_name            = "Basic"
+  name                 = "remix-weather-redis-test"
+  location             = var.location
+  resource_group_name  = var.resource_group_name
+  capacity             = 0
+  family               = "C"
+  sku_name             = "Basic"
   non_ssl_port_enabled = false
-  minimum_tls_version = "1.2"
+  minimum_tls_version  = "1.2"
 
   redis_configuration {
   }
@@ -39,14 +39,14 @@ resource "azurerm_redis_cache" "test" {
 
 # Azure Cache for Redis - Production Environment
 resource "azurerm_redis_cache" "prod" {
-  name                = "remix-weather-redis-prod"
-  location            = var.location
-  resource_group_name = var.resource_group_name
-  capacity            = 0
-  family              = "C"
-  sku_name            = "Basic"
+  name                 = "remix-weather-redis-prod"
+  location             = var.location
+  resource_group_name  = var.resource_group_name
+  capacity             = 0
+  family               = "C"
+  sku_name             = "Basic"
   non_ssl_port_enabled = false
-  minimum_tls_version = "1.2"
+  minimum_tls_version  = "1.2"
 
   redis_configuration {
   }

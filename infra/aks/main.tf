@@ -2,13 +2,9 @@ resource "azurerm_kubernetes_cluster" "aks" {
   for_each = {
     test = {
       node_count = 1
-      min_count  = 1
-      max_count  = 1
     }
     prod = {
-      node_count = 1
-      min_count  = 1
-      max_count  = 3
+      node_count = 2
     }
   }
 
@@ -18,19 +14,16 @@ resource "azurerm_kubernetes_cluster" "aks" {
   dns_prefix          = "aks-${each.key}"
 
   default_node_pool {
-    name                = "default"
-    vm_size             = "Standard_B2s"
-    enable_auto_scaling = true
-    node_count          = each.value.node_count
-    min_count           = each.value.min_count
-    max_count           = each.value.max_count
+    name       = "default"
+    vm_size    = "Standard_B2s"
+    node_count = each.value.node_count
   }
 
   identity {
     type = "SystemAssigned"
   }
 
-  kubernetes_version = "1.32.0"
+  kubernetes_version = "1.29.15"
 
   tags = {
     ProjectName = "CST8918-Final"
