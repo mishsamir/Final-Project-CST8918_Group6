@@ -1,0 +1,98 @@
+# Kubernetes Deployment for Remix Weather Application
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: remix-weather-app
+  labels:
+    app: remix-weather
+    project: cst8918-final
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: remix-weather
+  template:
+    metadata:
+      labels:
+        app: remix-weather
+    spec:
+      containers:
+      - name: remix-weather
+        image: ${ACR_LOGIN_SERVER}/remix-weather:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: REDIS_HOST
+          value: "${REDIS_HOSTNAME}"
+        - name: REDIS_PORT
+          value: "6380"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-secret
+              key: password
+        - name: WEATHER_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: weather-api-secret
+              key: api-key
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+---
+# Kubernetes Service for Remix Weather Application
+apiVersion: v1
+kind: Service
+metadata:
+  name: remix-weather-service
+  labels:
+    app: remix-weather
+    project: cst8918-final
+spec:
+  selector:
+    app: remix-weather
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3000
+  type: LoadBalancer
+---
+# Secret for Redis Password
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-secret
+  labels:
+    app: remix-weather
+    project: cst8918-final
+type: Opaque
+stringData:
+  password: "${REDIS_PASSWORD}"
+---
+# Secret for OpenWeather API Key
+apiVersion: v1
+kind: Secret
+metadata:
+  name: weather-api-secret
+  labels:
+    app: remix-weather
+    project: cst8918-final
+type: Opaque
+stringData:
+  api-key: "${WEATHER_API_KEY}"
