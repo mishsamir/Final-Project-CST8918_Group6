@@ -1,12 +1,12 @@
 resource "azurerm_kubernetes_cluster" "aks" {
   for_each = {
     test = {
-      min_count  = 1
-      max_count  = 2
+      min_count = 1
+      max_count = 2
     }
     prod = {
-      min_count  = 1
-      max_count  = 3
+      min_count = 1
+      max_count = 3
     }
   }
 
@@ -16,11 +16,11 @@ resource "azurerm_kubernetes_cluster" "aks" {
   dns_prefix          = "aks-${each.key}"
 
   default_node_pool {
-    name                = "default"
-    vm_size             = "Standard_B2s"
-    min_count           = each.value.min_count
-    max_count           = each.value.max_count
-    
+    name      = "default"
+    vm_size   = "Standard_B2s"
+    min_count = each.value.min_count
+    max_count = each.value.max_count
+
     auto_scaling_enabled = true
   }
 
