@@ -12,29 +12,24 @@ provider "azurerm" {
   features {}
 }
 
-# Backend module (create this first)
+# Backend module (creates its own resources)
 module "backend" {
   source = "./backend"
-  
-  resource_group_name   = "${var.project_name}-backend-rg"
-  location             = var.location
-  storage_account_name = "${var.project_name}tfstate${random_string.suffix.result}"
-  container_name       = "tfstate"
 }
 
-# Network module
+# Network module (create this first to establish the resource group)
 module "network" {
   source = "./network"
-  
+
   resource_group_name = "${var.project_name}-final-project-group-${var.group_number}"
-  location           = var.location
-  group_number       = var.group_number
+  location            = var.location
+  group_number        = var.group_number
 }
 
 # AKS module
 module "aks" {
   source = "./aks"
-  
+
   location            = var.location
   resource_group_name = module.network.resource_group_name
 }
@@ -42,10 +37,10 @@ module "aks" {
 # Remix Weather App module
 module "remix_weather" {
   source = "./remix-weather"
-  
+
   location            = var.location
   resource_group_name = module.network.resource_group_name
-  acr_name           = "${var.project_name}acr${random_string.suffix.result}"
+  acr_name            = "${var.project_name}acr${random_string.suffix.result}"
 }
 
 # Random string for unique naming

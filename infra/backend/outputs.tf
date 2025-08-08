@@ -10,5 +10,5 @@ output "container_name" {
 
 output "resource_group_name" {
   description = "Name of the backend resource group"
-  value       = azurerm_resource_group.rg.name
+  value       = azurerm_resource_group.backend_rg.name
 }

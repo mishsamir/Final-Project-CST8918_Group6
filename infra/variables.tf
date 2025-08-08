@@ -27,7 +27,7 @@ variable "project_name" {
 variable "group_number" {
   description = "Group number for resource naming"
   type        = string
-  default     = "01"
+  default     = "06"
 }
 
 variable "tags" {

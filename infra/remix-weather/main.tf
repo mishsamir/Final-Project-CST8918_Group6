@@ -1,3 +1,4 @@
+# Azure Container Registry for storing Docker images
 resource "azurerm_container_registry" "acr" {
   name                = var.acr_name
   resource_group_name = var.resource_group_name
@@ -13,29 +14,48 @@ resource "azurerm_container_registry" "acr" {
   }
 }
 
-resource "azurerm_kubernetes_cluster" "remix_aks" {
-  name                = "remix-aks-test"
+# Azure Cache for Redis - Test Environment
+resource "azurerm_redis_cache" "test" {
+  name                = "remix-weather-redis-test"
   location            = var.location
   resource_group_name = var.resource_group_name
-  dns_prefix          = "remix-aks"
+  capacity            = 0
+  family              = "C"
+  sku_name            = "Basic"
+  non_ssl_port_enabled = false
+  minimum_tls_version = "1.2"
 
-  default_node_pool {
-    name       = "default"
-    node_count = 1
-    vm_size    = "Standard_B2s"
+  redis_configuration {
   }
-
-  identity {
-    type = "SystemAssigned"
-  }
-
-  kubernetes_version = "1.30.0"
 
   tags = {
     ProjectName = "CST8918-Final"
     Environment = "test"
     Course      = "CST8918"
-    Service     = "AKS"
+    Service     = "Redis"
+    Application = "remix-weather"
+  }
+}
+
+# Azure Cache for Redis - Production Environment
+resource "azurerm_redis_cache" "prod" {
+  name                = "remix-weather-redis-prod"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  capacity            = 0
+  family              = "C"
+  sku_name            = "Basic"
+  non_ssl_port_enabled = false
+  minimum_tls_version = "1.2"
+
+  redis_configuration {
+  }
+
+  tags = {
+    ProjectName = "CST8918-Final"
+    Environment = "prod"
+    Course      = "CST8918"
+    Service     = "Redis"
     Application = "remix-weather"
   }
 }
