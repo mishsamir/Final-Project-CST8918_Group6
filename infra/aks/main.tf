@@ -20,8 +20,8 @@ resource "azurerm_kubernetes_cluster" "aks" {
     vm_size             = "Standard_B2s"
     min_count           = each.value.min_count
     max_count           = each.value.max_count
-
-    enable_auto_scaling = true
+    
+    auto_scaling_enabled = true
   }
 
   identity {
