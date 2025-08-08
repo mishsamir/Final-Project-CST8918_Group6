@@ -25,7 +25,7 @@ module "backend" {
 module "network" {
   source = "./network"
 
-  resource_group_name = var.resource_group_name
+  resource_group_name = "${var.project_name}-final-project-group-${var.group_number}"
   location            = var.location
   group_number        = var.group_number
 }
@@ -36,8 +36,6 @@ module "aks" {
 
   location            = var.location
   resource_group_name = module.network.resource_group_name
-  environment         = var.environment
-  tags                = var.tags
 }
 
 # Remix Weather App module
