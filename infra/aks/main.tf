@@ -2,7 +2,7 @@ resource "azurerm_kubernetes_cluster" "aks" {
   for_each = {
     test = {
       min_count  = 1
-      max_count  = 1
+      max_count  = 2
     }
     prod = {
       min_count  = 1
