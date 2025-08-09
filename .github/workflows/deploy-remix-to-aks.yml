@@ -99,7 +99,7 @@ jobs:
             -p '{"imagePullSecrets": [{"name": "acr-secret"}]}' \
             --namespace=remix-weather-test
           
-          echo "✅ ACR image pull secret configured for namespace"
+          echo "ACR image pull secret configured for namespace"
 
       - name: Get Redis Connection Information
         id: redis-info
@@ -197,8 +197,25 @@ jobs:
             --from-literal=api-key="${{ secrets.WEATHER_API_KEY }}" \
             --namespace=remix-weather-test \
             --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Clean Up Previous Failed Deployments
+        run: |
+          echo "Cleaning up any existing failed deployments..."
           
-          # Copy and customize the K8s deployment file for test environment
+          # Delete existing deployment if it exists (will be recreated with proper auth)
+          kubectl delete deployment remix-weather-test --ignore-not-found=true --namespace=remix-weather-test
+          
+          # Wait for pods to be fully removed
+          echo "Waiting for old pods to be removed..."
+          sleep 10
+          
+          echo "✅ Previous deployments cleaned up"
+
+      - name: Deploy Application Using Existing K8s Manifest
+        run: |
+          # Use the dynamically determined image tag
+          IMAGE_TAG="${{ steps.image-tag.outputs.image-tag }}"
+          echo "Deploying with image tag: ${IMAGE_TAG}"
           cp k8s/remix-weather-deployment.yaml k8s-test-deployment.yaml
           
           # Replace variables in the deployment file (but skip secrets since we created them separately)
@@ -512,8 +529,25 @@ jobs:
             --from-literal=api-key="${{ secrets.WEATHER_API_KEY }}" \
             --namespace=remix-weather-prod \
             --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Clean Up Previous Failed Deployments
+        run: |
+          echo "Cleaning up any existing failed deployments..."
           
-          # Copy and customize the K8s deployment file for production environment
+          # Delete existing deployment if it exists (will be recreated with proper auth)
+          kubectl delete deployment remix-weather-prod --ignore-not-found=true --namespace=remix-weather-prod
+          
+          # Wait for pods to be fully removed
+          echo "Waiting for old pods to be removed..."
+          sleep 10
+          
+          echo "✅ Previous deployments cleaned up"
+
+      - name: Continue Production Deployment
+        run: |
+          # Use the dynamically determined image tag
+          IMAGE_TAG="${{ steps.image-tag.outputs.image-tag }}"
+          echo "Deploying with image tag: ${IMAGE_TAG}"
           cp k8s/remix-weather-deployment.yaml k8s-prod-deployment.yaml
           
           # Replace variables in the deployment file (but skip secrets since we created them separately)
