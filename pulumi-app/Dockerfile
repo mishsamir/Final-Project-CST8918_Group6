@@ -1,6 +1,9 @@
 # base node image
-FROM node:lts-alpine AS base
+FROM node:lts-alpine A# Build with production NODE_ENV for correct JSX transforms
+ENV NODE_ENV=production
 
+# Run build with error handling  
+RUN npm run build || (echo "Build failed. Checking environment..." && ls -la && echo "Node version:" && node --version && echo "NPM version:" && npm --version && exit 1)
 # update the openssl package to apply a security patch @see CVE-2023-6129⁠
 RUN apk -U add --update-cache openssl
 
@@ -39,8 +42,8 @@ COPY remix.env.d.ts ./
 COPY app ./app
 COPY public ./public
 
-# Set NODE_ENV to development for build process
-ENV NODE_ENV=development
+# Build with production NODE_ENV for correct JSX transforms
+ENV NODE_ENV=production
 
 # Run build with error handling
 RUN npm run build || (echo "Build failed. Checking environment..." && ls -la && echo "Node version:" && node --version && echo "NPM version:" && npm --version && exit 1)
