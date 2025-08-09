@@ -1,7 +1,7 @@
 {
   "name": "branch-main",
   "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "repo:mishsamir/Final-Project-CST8918_Group6:branch:main",
+  "subject": "repo:mishsamir/Final-Project-CST8918_Group6:ref:refs/heads/main",
   "description": "CST8918 Lab12 - GitHub Actions",
   "audiences": ["api://AzureADTokenExchange"]
 }
