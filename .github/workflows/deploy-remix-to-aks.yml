@@ -76,6 +76,16 @@ jobs:
             --name ${{ steps.azure-resources.outputs.aks-test-name }} \
             --overwrite-existing
 
+      - name: Configure AKS to Pull from ACR
+        run: |
+          # Attach ACR to AKS cluster for image pulling
+          az aks update \
+            --resource-group ${{ steps.azure-resources.outputs.aks-resource-group }} \
+            --name ${{ steps.azure-resources.outputs.aks-test-name }} \
+            --attach-acr cst8918acr8kp2cim9
+          
+          echo "✅ ACR authentication configured for AKS cluster"
+
       - name: Get Redis Connection Information
         id: redis-info
         run: |
@@ -365,6 +375,16 @@ jobs:
             --resource-group ${{ steps.azure-resources.outputs.aks-resource-group }} \
             --name ${{ steps.azure-resources.outputs.aks-prod-name }} \
             --overwrite-existing
+
+      - name: Configure AKS to Pull from ACR
+        run: |
+          # Attach ACR to AKS cluster for image pulling
+          az aks update \
+            --resource-group ${{ steps.azure-resources.outputs.aks-resource-group }} \
+            --name ${{ steps.azure-resources.outputs.aks-prod-name }} \
+            --attach-acr cst8918acr8kp2cim9
+          
+          echo "✅ ACR authentication configured for AKS cluster"
 
       - name: Create Kubernetes Namespace
         run: |
