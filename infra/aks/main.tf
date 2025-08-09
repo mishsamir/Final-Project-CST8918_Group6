@@ -23,7 +23,7 @@ resource "azurerm_kubernetes_cluster" "aks" {
     type = "SystemAssigned"
   }
 
-  kubernetes_version = "1.29.15"
+  kubernetes_version = "1.32.6"
 
   tags = {
     ProjectName = "CST8918-Final"
