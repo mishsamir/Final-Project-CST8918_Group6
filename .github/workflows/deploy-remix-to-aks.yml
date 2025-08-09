@@ -78,13 +78,28 @@ jobs:
 
       - name: Configure AKS to Pull from ACR
         run: |
-          # Attach ACR to AKS cluster for image pulling
-          az aks update \
-            --resource-group ${{ steps.azure-resources.outputs.aks-resource-group }} \
-            --name ${{ steps.azure-resources.outputs.aks-test-name }} \
-            --attach-acr cst8918acr8kp2cim9
+          # Alternative approach: Create image pull secret for ACR access
+          # This works with Contributor permissions (doesn't require Owner)
           
-          echo "✅ ACR authentication configured for AKS cluster"
+          # Get ACR login server and credentials
+          ACR_LOGIN_SERVER=$(az acr show --name cst8918acr8kp2cim9 --query "loginServer" --output tsv)
+          ACR_USERNAME=$(az acr credential show --name cst8918acr8kp2cim9 --query "username" --output tsv)
+          ACR_PASSWORD=$(az acr credential show --name cst8918acr8kp2cim9 --query "passwords[0].value" --output tsv)
+          
+          # Create docker registry secret in the namespace
+          kubectl create secret docker-registry acr-secret \
+            --docker-server=$ACR_LOGIN_SERVER \
+            --docker-username=$ACR_USERNAME \
+            --docker-password=$ACR_PASSWORD \
+            --namespace=remix-weather-test \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Patch the default service account to use the image pull secret
+          kubectl patch serviceaccount default \
+            -p '{"imagePullSecrets": [{"name": "acr-secret"}]}' \
+            --namespace=remix-weather-test
+          
+          echo "✅ ACR image pull secret configured for namespace"
 
       - name: Get Redis Connection Information
         id: redis-info
@@ -378,13 +393,28 @@ jobs:
 
       - name: Configure AKS to Pull from ACR
         run: |
-          # Attach ACR to AKS cluster for image pulling
-          az aks update \
-            --resource-group ${{ steps.azure-resources.outputs.aks-resource-group }} \
-            --name ${{ steps.azure-resources.outputs.aks-prod-name }} \
-            --attach-acr cst8918acr8kp2cim9
+          # Alternative approach: Create image pull secret for ACR access
+          # This works with Contributor permissions (doesn't require Owner)
           
-          echo "✅ ACR authentication configured for AKS cluster"
+          # Get ACR login server and credentials
+          ACR_LOGIN_SERVER=$(az acr show --name cst8918acr8kp2cim9 --query "loginServer" --output tsv)
+          ACR_USERNAME=$(az acr credential show --name cst8918acr8kp2cim9 --query "username" --output tsv)
+          ACR_PASSWORD=$(az acr credential show --name cst8918acr8kp2cim9 --query "passwords[0].value" --output tsv)
+          
+          # Create docker registry secret in the namespace
+          kubectl create secret docker-registry acr-secret \
+            --docker-server=$ACR_LOGIN_SERVER \
+            --docker-username=$ACR_USERNAME \
+            --docker-password=$ACR_PASSWORD \
+            --namespace=remix-weather-prod \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Patch the default service account to use the image pull secret
+          kubectl patch serviceaccount default \
+            -p '{"imagePullSecrets": [{"name": "acr-secret"}]}' \
+            --namespace=remix-weather-prod
+          
+          echo "✅ ACR image pull secret configured for namespace"
 
       - name: Create Kubernetes Namespace
         run: |
