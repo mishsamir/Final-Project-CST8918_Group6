@@ -288,6 +288,21 @@ jobs:
                 done
               fi
               
+              # Also check running pods that might be restarting
+              RUNNING_PODS=$(kubectl get pods -n remix-weather-test -o jsonpath="{.items[?(@.status.phase==\"Running\")].metadata.name}")
+              for pod in $RUNNING_PODS; do
+                RESTARTS=$(kubectl get pod $pod -n remix-weather-test -o jsonpath="{.status.containerStatuses[0].restartCount}")
+                if [ "$RESTARTS" -gt 0 ]; then
+                  echo "=== Pod $pod has restarted $RESTARTS times, checking logs ==="
+                  echo "Previous container logs:"
+                  kubectl logs $pod -n remix-weather-test --previous 2>/dev/null || echo "No previous logs available"
+                  echo "Current container logs:"
+                  kubectl logs $pod -n remix-weather-test || echo "No current logs available"
+                  echo "=== Container status ==="
+                  kubectl get pod $pod -n remix-weather-test -o jsonpath="{.status.containerStatuses[0]}" | jq '.'
+                fi
+              done
+              
               sleep 10
             done
           ' || {
@@ -618,6 +633,21 @@ jobs:
                   kubectl logs $pod -n remix-weather-prod || echo "No current logs"
                 done
               fi
+              
+              # Also check running pods that might be restarting
+              RUNNING_PODS=$(kubectl get pods -n remix-weather-prod -o jsonpath="{.items[?(@.status.phase==\"Running\")].metadata.name}")
+              for pod in $RUNNING_PODS; do
+                RESTARTS=$(kubectl get pod $pod -n remix-weather-prod -o jsonpath="{.status.containerStatuses[0].restartCount}")
+                if [ "$RESTARTS" -gt 0 ]; then
+                  echo "=== Pod $pod has restarted $RESTARTS times, checking logs ==="
+                  echo "Previous container logs:"
+                  kubectl logs $pod -n remix-weather-prod --previous 2>/dev/null || echo "No previous logs available"
+                  echo "Current container logs:"
+                  kubectl logs $pod -n remix-weather-prod || echo "No current logs available"
+                  echo "=== Container status ==="
+                  kubectl get pod $pod -n remix-weather-prod -o jsonpath="{.status.containerStatuses[0]}" | jq '.'
+                fi
+              done
               
               sleep 15
             done
