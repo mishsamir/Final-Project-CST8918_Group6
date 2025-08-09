@@ -148,10 +148,10 @@ jobs:
                   repo: context.repo.repo,
                   body: body
               })
-# This will only run if the terraform plan has changes, and when the PR is approved and merged to main.
+# This will run when the PR is approved and merged to main.
   terraform-apply:
     name: 'Terraform Apply'
-    if: github.ref == 'refs/heads/main' && needs.terraform-plan.outputs.tfplanExitCode == 2
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
     needs: [terraform-plan]
