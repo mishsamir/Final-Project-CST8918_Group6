@@ -4,7 +4,9 @@ on:
   pull_request:
     branches: [ main ]
     paths:
-      - 'pulumi-app/**'
+      - 'pulu          echo "Found Redis: $REDIS_PROD_HOSTNAME"
+
+      - name: Determine Image Tag to Deploy**'
       - 'k8s/**'
       - '.github/workflows/deploy-remix-to-aks.yml'
   push:
@@ -422,6 +424,10 @@ jobs:
             --resource-group ${{ steps.azure-resources.outputs.aks-resource-group }} \
             --name ${{ steps.azure-resources.outputs.aks-prod-name }} \
             --overwrite-existing
+
+      - name: Create Kubernetes Namespace
+        run: |
+          kubectl create namespace remix-weather-prod --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Configure AKS to Pull from ACR
         run: |
