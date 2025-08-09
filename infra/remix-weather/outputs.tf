@@ -8,17 +8,24 @@ output "acr_login_server" {
   value       = azurerm_container_registry.acr.login_server
 }
 
-output "remix_aks_name" {
-  description = "Name of the Remix AKS cluster"
-  value       = azurerm_kubernetes_cluster.remix_aks.name
+output "redis_test_hostname" {
+  description = "Hostname of the Redis cache for test environment"
+  value       = azurerm_redis_cache.test.hostname
 }
 
-output "remix_aks_id" {
-  description = "ID of the Remix AKS cluster"
-  value       = azurerm_kubernetes_cluster.remix_aks.id
+output "redis_test_primary_key" {
+  description = "Primary access key for Redis cache in test environment"
+  value       = azurerm_redis_cache.test.primary_access_key
+  sensitive   = true
 }
 
-output "remix_aks_fqdn" {
-  description = "FQDN of the Remix AKS cluster"
-  value       = azurerm_kubernetes_cluster.remix_aks.fqdn
+output "redis_prod_hostname" {
+  description = "Hostname of the Redis cache for production environment"
+  value       = azurerm_redis_cache.prod.hostname
+}
+
+output "redis_prod_primary_key" {
+  description = "Primary access key for Redis cache in production environment"
+  value       = azurerm_redis_cache.prod.primary_access_key
+  sensitive   = true
 }

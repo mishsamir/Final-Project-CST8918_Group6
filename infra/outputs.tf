@@ -48,11 +48,13 @@ output "aks_clusters" {
   }
 }
 
-output "remix_aks_cluster" {
-  description = "Information about the Remix AKS cluster"
-  value = {
-    name = module.remix_weather.remix_aks_name
-    id   = module.remix_weather.remix_aks_id
-    fqdn = module.remix_weather.remix_aks_fqdn
-  }
+# Redis Cache outputs
+output "redis_test_hostname" {
+  description = "Hostname of the Redis cache for test environment"
+  value       = module.remix_weather.redis_test_hostname
+}
+
+output "redis_prod_hostname" {
+  description = "Hostname of the Redis cache for production environment"
+  value       = module.remix_weather.redis_prod_hostname
 }
