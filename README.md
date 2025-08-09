@@ -5,10 +5,9 @@ A complete Infrastructure as Code (IaC) solution for deploying a Remix Weather a
 
 
 ##  Team Members
-     Nirajan Khadka: https://github.com/khad0062
-     Samir Mishra : https://github.com/mishsamir
-     
-     
+     Nirajan Khadka: https://github.com/khad0062- 
+     Samir Mishra : https://github.com/mishsamir  -mishsamir
+     Sai Karthick Kalidoss - https://github.com/Saikarthick07 -Saikarthick07
 
 ##  Project Overview
 
