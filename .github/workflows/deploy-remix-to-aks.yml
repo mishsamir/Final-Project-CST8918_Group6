@@ -91,14 +91,45 @@ jobs:
         run: |
           kubectl create namespace remix-weather-test --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Verify Docker Image Exists in ACR
+      - name: Determine Image Tag to Deploy
+        id: image-tag
         run: |
           SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
-          echo "Checking if image exists: ${{ steps.azure-resources.outputs.acr-login-server }}/remix-weather:${SHORT_SHA}"
+          echo "Current commit short SHA: ${SHORT_SHA}"
           
-          # Check if the image exists in ACR
-          az acr repository show --name cst8918acr8kp2cim9 --image remix-weather:${SHORT_SHA} || {
-            echo "ERROR: Image remix-weather:${SHORT_SHA} not found in ACR"
+          # Check if image exists for current commit
+          if az acr repository show --name cst8918acr8kp2cim9 --image remix-weather:${SHORT_SHA} > /dev/null 2>&1; then
+            echo "✅ Found image for current commit: ${SHORT_SHA}"
+            echo "image-tag=${SHORT_SHA}" >> $GITHUB_OUTPUT
+            echo "image-source=current-commit" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ No image found for current commit: ${SHORT_SHA}"
+            echo "Looking for most recent available image..."
+            
+            # Get the most recent image tag (excluding 'latest')
+            LATEST_TAG=$(az acr repository show-tags --name cst8918acr8kp2cim9 --repository remix-weather --output tsv --orderby time_desc --top 1 | grep -v '^latest$' | head -1)
+            
+            if [ ! -z "$LATEST_TAG" ] && [ "$LATEST_TAG" != "latest" ]; then
+              echo "✅ Using most recent available image: ${LATEST_TAG}"
+              echo "image-tag=${LATEST_TAG}" >> $GITHUB_OUTPUT
+              echo "image-source=latest-available" >> $GITHUB_OUTPUT
+            else
+              echo "✅ Using 'latest' tag as fallback"
+              echo "image-tag=latest" >> $GITHUB_OUTPUT
+              echo "image-source=latest-tag" >> $GITHUB_OUTPUT
+            fi
+          fi
+          
+          echo "Selected image tag: $(cat $GITHUB_OUTPUT | grep image-tag | cut -d= -f2)"
+
+      - name: Verify Docker Image Exists in ACR
+        run: |
+          IMAGE_TAG="${{ steps.image-tag.outputs.image-tag }}"
+          echo "Verifying image exists: ${{ steps.azure-resources.outputs.acr-login-server }}/remix-weather:${IMAGE_TAG}"
+          
+          # Check if the selected image exists in ACR
+          az acr repository show --name cst8918acr8kp2cim9 --image remix-weather:${IMAGE_TAG} || {
+            echo "ERROR: Image remix-weather:${IMAGE_TAG} not found in ACR"
             echo "Available tags for remix-weather:"
             az acr repository show-tags --name cst8918acr8kp2cim9 --repository remix-weather --output table
             echo "All repositories in ACR:"
@@ -107,6 +138,7 @@ jobs:
           }
           
           echo "✅ Docker image verified in ACR"
+          echo "Image source: ${{ steps.image-tag.outputs.image-source }}"
 
       - name: Verify Required Secrets
         run: |
@@ -126,8 +158,9 @@ jobs:
 
       - name: Deploy Application Using Existing K8s Manifest
         run: |
-          # Get short commit SHA for image tag
-          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          # Use the dynamically determined image tag
+          IMAGE_TAG="${{ steps.image-tag.outputs.image-tag }}"
+          echo "Deploying with image tag: ${IMAGE_TAG}"
           
           # Create Kubernetes secrets first
           echo "Creating Kubernetes secrets for test environment..."
@@ -146,7 +179,7 @@ jobs:
           # Replace variables in the deployment file (but skip secrets since we created them separately)
           sed -i "s|\${ACR_LOGIN_SERVER}|${{ steps.azure-resources.outputs.acr-login-server }}|g" k8s-test-deployment.yaml
           sed -i "s|\${REDIS_HOSTNAME}|${{ steps.redis-info.outputs.redis-hostname }}|g" k8s-test-deployment.yaml
-          sed -i "s|:latest|:${SHORT_SHA}|g" k8s-test-deployment.yaml
+          sed -i "s|:latest|:${IMAGE_TAG}|g" k8s-test-deployment.yaml
           
           # Remove the secret creation sections since we created them separately
           sed -i '/^---$/,$d' k8s-test-deployment.yaml
@@ -255,12 +288,14 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const shortSha = "${{ github.sha }}".substring(0, 7);
+            const imageTag = "${{ steps.image-tag.outputs.image-tag }}";
+            const imageSource = "${{ steps.image-tag.outputs.image-source }}";
             const externalIp = "${{ steps.service-info.outputs.external-ip }}";
             
             let body = `## Test Deployment Successful\n\n`;
             body += `**Environment:** Test\n`;
-            body += `**Image:** \`${{ steps.azure-resources.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:${shortSha}\`\n`;
+            body += `**Image:** \`${{ steps.azure-resources.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:${imageTag}\`\n`;
+            body += `**Image Source:** \`${imageSource}\`\n`;
             body += `**Namespace:** \`remix-weather-test\`\n\n`;
             
             if (externalIp) {
@@ -346,14 +381,45 @@ jobs:
           echo "redis-password=$REDIS_PROD_KEY" >> $GITHUB_OUTPUT
           echo "Found Redis: $REDIS_PROD_HOSTNAME"
 
-      - name: Verify Docker Image Exists in ACR
+      - name: Determine Image Tag to Deploy
+        id: image-tag
         run: |
           SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
-          echo "Checking if image exists: ${{ steps.azure-resources.outputs.acr-login-server }}/remix-weather:${SHORT_SHA}"
+          echo "Current commit short SHA: ${SHORT_SHA}"
           
-          # Check if the image exists in ACR
-          az acr repository show --name cst8918acr8kp2cim9 --image remix-weather:${SHORT_SHA} || {
-            echo "ERROR: Image remix-weather:${SHORT_SHA} not found in ACR"
+          # Check if image exists for current commit
+          if az acr repository show --name cst8918acr8kp2cim9 --image remix-weather:${SHORT_SHA} > /dev/null 2>&1; then
+            echo "✅ Found image for current commit: ${SHORT_SHA}"
+            echo "image-tag=${SHORT_SHA}" >> $GITHUB_OUTPUT
+            echo "image-source=current-commit" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ No image found for current commit: ${SHORT_SHA}"
+            echo "Looking for most recent available image..."
+            
+            # Get the most recent image tag (excluding 'latest')
+            LATEST_TAG=$(az acr repository show-tags --name cst8918acr8kp2cim9 --repository remix-weather --output tsv --orderby time_desc --top 1 | grep -v '^latest$' | head -1)
+            
+            if [ ! -z "$LATEST_TAG" ] && [ "$LATEST_TAG" != "latest" ]; then
+              echo "✅ Using most recent available image: ${LATEST_TAG}"
+              echo "image-tag=${LATEST_TAG}" >> $GITHUB_OUTPUT
+              echo "image-source=latest-available" >> $GITHUB_OUTPUT
+            else
+              echo "✅ Using 'latest' tag as fallback"
+              echo "image-tag=latest" >> $GITHUB_OUTPUT
+              echo "image-source=latest-tag" >> $GITHUB_OUTPUT
+            fi
+          fi
+          
+          echo "Selected image tag: $(cat $GITHUB_OUTPUT | grep image-tag | cut -d= -f2)"
+
+      - name: Verify Docker Image Exists in ACR
+        run: |
+          IMAGE_TAG="${{ steps.image-tag.outputs.image-tag }}"
+          echo "Verifying image exists: ${{ steps.azure-resources.outputs.acr-login-server }}/remix-weather:${IMAGE_TAG}"
+          
+          # Check if the selected image exists in ACR
+          az acr repository show --name cst8918acr8kp2cim9 --image remix-weather:${IMAGE_TAG} || {
+            echo "ERROR: Image remix-weather:${IMAGE_TAG} not found in ACR"
             echo "Available tags for remix-weather:"
             az acr repository show-tags --name cst8918acr8kp2cim9 --repository remix-weather --output table
             echo "All repositories in ACR:"
@@ -362,6 +428,7 @@ jobs:
           }
           
           echo "✅ Docker image verified in ACR"
+          echo "Image source: ${{ steps.image-tag.outputs.image-source }}"
 
       - name: Verify Required Secrets
         run: |
@@ -381,8 +448,9 @@ jobs:
 
       - name: Deploy Application Using Existing K8s Manifest
         run: |
-          # Get short commit SHA for image tag
-          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          # Use the dynamically determined image tag
+          IMAGE_TAG="${{ steps.image-tag.outputs.image-tag }}"
+          echo "Deploying with image tag: ${IMAGE_TAG}"
           
           # Create Kubernetes secrets first
           echo "Creating Kubernetes secrets for production environment..."
@@ -401,7 +469,7 @@ jobs:
           # Replace variables in the deployment file (but skip secrets since we created them separately)
           sed -i "s|\${ACR_LOGIN_SERVER}|${{ steps.azure-resources.outputs.acr-login-server }}|g" k8s-prod-deployment.yaml
           sed -i "s|\${REDIS_HOSTNAME}|${{ steps.redis-info.outputs.redis-hostname }}|g" k8s-prod-deployment.yaml
-          sed -i "s|:latest|:${SHORT_SHA}|g" k8s-prod-deployment.yaml
+          sed -i "s|:latest|:${IMAGE_TAG}|g" k8s-prod-deployment.yaml
           
           # Remove the secret creation sections since we created them separately
           sed -i '/^---$/,$d' k8s-prod-deployment.yaml
