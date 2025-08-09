@@ -1,0 +1,9 @@
+{
+  "name": "production-environment",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:mishsamir/Final-Project-CST8918_Group6:environment:production",
+  "description": "GitHub Actions deployment to production environment",
+  "audiences": [
+    "api://AzureADTokenExchange"
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "test-environment",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:mishsamir/Final-Project-CST8918_Group6:environment:test",
+  "description": "GitHub Actions deployment to test environment",
+  "audiences": [
+    "api://AzureADTokenExchange"
+  ]
+}

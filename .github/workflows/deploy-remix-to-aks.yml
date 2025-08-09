@@ -1,0 +1,702 @@
+name: Deploy Remix Weather App to AKS
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'pulumi-app/**'
+      - 'k8s/**'
+      - '.github/workflows/deploy-remix-to-aks.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - 'pulumi-app/**'
+      - 'k8s/**'
+      - '.github/workflows/deploy-remix-to-aks.yml'
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+env:
+  ARM_CLIENT_ID: "${{ secrets.AZURE_CLIENT_ID }}"
+  ARM_SUBSCRIPTION_ID: "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+  ARM_TENANT_ID: "${{ secrets.AZURE_TENANT_ID }}"
+  ARM_USE_OIDC: true
+  IMAGE_NAME: "remix-weather"
+
+jobs:
+  deploy-to-test:
+    if: github.event_name == 'pull_request'
+    name: 'Deploy to Test Environment'
+    runs-on: ubuntu-latest
+    environment: test
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get ACR and AKS Information
+        id: azure-resources
+        run: |
+          # Get ACR login server dynamically
+          ACR_LOGIN_SERVER=$(az acr list --query "[?contains(name, 'cst8918')].loginServer" -o tsv | head -1)
+          ACR_NAME=$(az acr list --query "[?contains(name, 'cst8918')].name" -o tsv | head -1)
+          
+          # Get AKS test cluster info
+          AKS_TEST_NAME=$(az aks list --query "[?contains(name, 'aks-test')].name" -o tsv | head -1)
+          AKS_RESOURCE_GROUP=$(az aks list --query "[?contains(name, 'aks-test')].resourceGroup" -o tsv | head -1)
+          
+          if [ -z "$ACR_LOGIN_SERVER" ] || [ -z "$AKS_TEST_NAME" ]; then
+            echo "Could not find required Azure resources"
+            exit 1
+          fi
+          
+          echo "acr-login-server=$ACR_LOGIN_SERVER" >> $GITHUB_OUTPUT
+          echo "acr-name=$ACR_NAME" >> $GITHUB_OUTPUT
+          echo "aks-test-name=$AKS_TEST_NAME" >> $GITHUB_OUTPUT
+          echo "aks-resource-group=$AKS_RESOURCE_GROUP" >> $GITHUB_OUTPUT
+          
+          echo "Found resources:"
+          echo "- ACR: $ACR_LOGIN_SERVER"
+          echo "- AKS Test: $AKS_TEST_NAME in $AKS_RESOURCE_GROUP"
+
+      - name: Get AKS Test Credentials
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ steps.azure-resources.outputs.aks-resource-group }} \
+            --name ${{ steps.azure-resources.outputs.aks-test-name }} \
+            --overwrite-existing
+
+      - name: Configure AKS to Pull from ACR
+        run: |
+          # Alternative approach: Create image pull secret for ACR access
+          # This works with Contributor permissions (doesn't require Owner)
+          
+          # Get ACR login server and credentials
+          ACR_LOGIN_SERVER=$(az acr show --name cst8918acr8kp2cim9 --query "loginServer" --output tsv)
+          ACR_USERNAME=$(az acr credential show --name cst8918acr8kp2cim9 --query "username" --output tsv)
+          ACR_PASSWORD=$(az acr credential show --name cst8918acr8kp2cim9 --query "passwords[0].value" --output tsv)
+          
+          # Create docker registry secret in the namespace
+          kubectl create secret docker-registry acr-secret \
+            --docker-server=$ACR_LOGIN_SERVER \
+            --docker-username=$ACR_USERNAME \
+            --docker-password=$ACR_PASSWORD \
+            --namespace=remix-weather-test \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Patch the default service account to use the image pull secret
+          kubectl patch serviceaccount default \
+            -p '{"imagePullSecrets": [{"name": "acr-secret"}]}' \
+            --namespace=remix-weather-test
+          
+          echo "ACR image pull secret configured for namespace"
+
+      - name: Get Redis Connection Information
+        id: redis-info
+        run: |
+          # Get Redis hostname and password for test environment
+          REDIS_TEST_HOSTNAME=$(az redis list --query "[?contains(name, 'test')].hostName" -o tsv | head -1)
+          REDIS_TEST_KEY=$(az redis list-keys --name $(az redis list --query "[?contains(name, 'test')].name" -o tsv | head -1) --resource-group ${{ steps.azure-resources.outputs.aks-resource-group }} --query "primaryKey" -o tsv)
+          
+          echo "redis-hostname=$REDIS_TEST_HOSTNAME" >> $GITHUB_OUTPUT
+          echo "redis-password=$REDIS_TEST_KEY" >> $GITHUB_OUTPUT
+          echo "Found Redis: $REDIS_TEST_HOSTNAME"
+
+      - name: Create Kubernetes Namespace
+        run: |
+          kubectl create namespace remix-weather-test --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Determine Image Tag to Deploy
+        id: image-tag
+        run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          echo "Current commit short SHA: ${SHORT_SHA}"
+          
+          # Check if image exists for current commit
+          if az acr repository show --name cst8918acr8kp2cim9 --image remix-weather:${SHORT_SHA} > /dev/null 2>&1; then
+            echo "✅ Found image for current commit: ${SHORT_SHA}"
+            echo "image-tag=${SHORT_SHA}" >> $GITHUB_OUTPUT
+            echo "image-source=current-commit" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ No image found for current commit: ${SHORT_SHA}"
+            echo "Looking for most recent available image..."
+            
+            # Get the most recent image tag (excluding 'latest')
+            LATEST_TAG=$(az acr repository show-tags --name cst8918acr8kp2cim9 --repository remix-weather --output tsv --orderby time_desc --top 1 | grep -v '^latest$' | head -1)
+            
+            if [ ! -z "$LATEST_TAG" ] && [ "$LATEST_TAG" != "latest" ]; then
+              echo "✅ Using most recent available image: ${LATEST_TAG}"
+              echo "image-tag=${LATEST_TAG}" >> $GITHUB_OUTPUT
+              echo "image-source=latest-available" >> $GITHUB_OUTPUT
+            else
+              echo "✅ Using 'latest' tag as fallback"
+              echo "image-tag=latest" >> $GITHUB_OUTPUT
+              echo "image-source=latest-tag" >> $GITHUB_OUTPUT
+            fi
+          fi
+          
+          echo "Selected image tag: $(cat $GITHUB_OUTPUT | grep image-tag | cut -d= -f2)"
+
+      - name: Verify Docker Image Exists in ACR
+        run: |
+          IMAGE_TAG="${{ steps.image-tag.outputs.image-tag }}"
+          echo "Verifying image exists: ${{ steps.azure-resources.outputs.acr-login-server }}/remix-weather:${IMAGE_TAG}"
+          
+          # Check if the selected image exists in ACR
+          az acr repository show --name cst8918acr8kp2cim9 --image remix-weather:${IMAGE_TAG} || {
+            echo "ERROR: Image remix-weather:${IMAGE_TAG} not found in ACR"
+            echo "Available tags for remix-weather:"
+            az acr repository show-tags --name cst8918acr8kp2cim9 --repository remix-weather --output table
+            echo "All repositories in ACR:"
+            az acr repository list --name cst8918acr8kp2cim9 --output table
+            exit 1
+          }
+          
+          echo "✅ Docker image verified in ACR"
+          echo "Image source: ${{ steps.image-tag.outputs.image-source }}"
+
+      - name: Verify Required Secrets
+        run: |
+          echo "Verifying required secrets and configuration..."
+          
+          # Check if WEATHER_API_KEY is set
+          if [ -z "${{ secrets.WEATHER_API_KEY }}" ]; then
+            echo "ERROR: WEATHER_API_KEY secret is not set"
+            exit 1
+          fi
+          
+          # Check Redis connection details
+          echo "Redis Hostname: ${{ steps.redis-info.outputs.redis-hostname }}"
+          echo "Redis Password length: $(echo '${{ steps.redis-info.outputs.redis-password }}' | wc -c)"
+          
+          echo "✅ All secrets verified"
+
+      - name: Deploy Application Using Existing K8s Manifest
+        run: |
+          # Use the dynamically determined image tag
+          IMAGE_TAG="${{ steps.image-tag.outputs.image-tag }}"
+          echo "Deploying with image tag: ${IMAGE_TAG}"
+          
+          # Create Kubernetes secrets first
+          echo "Creating Kubernetes secrets for test environment..."
+          kubectl create secret generic redis-secret \
+            --from-literal=password="${{ steps.redis-info.outputs.redis-password }}" \
+            --namespace=remix-weather-test \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic weather-api-secret \
+            --from-literal=api-key="${{ secrets.WEATHER_API_KEY }}" \
+            --namespace=remix-weather-test \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Clean Up Previous Failed Deployments
+        run: |
+          echo "Cleaning up any existing failed deployments..."
+          
+          # Delete existing deployment if it exists (will be recreated with proper auth)
+          kubectl delete deployment remix-weather-test --ignore-not-found=true --namespace=remix-weather-test
+          
+          # Wait for pods to be fully removed
+          echo "Waiting for old pods to be removed..."
+          sleep 10
+          
+          echo "✅ Previous deployments cleaned up"
+
+      - name: Deploy Application Using Existing K8s Manifest
+        run: |
+          # Use the dynamically determined image tag
+          IMAGE_TAG="${{ steps.image-tag.outputs.image-tag }}"
+          echo "Deploying with image tag: ${IMAGE_TAG}"
+          cp k8s/remix-weather-deployment.yaml k8s-test-deployment.yaml
+          
+          # Replace variables in the deployment file (but skip secrets since we created them separately)
+          sed -i "s|\${ACR_LOGIN_SERVER}|${{ steps.azure-resources.outputs.acr-login-server }}|g" k8s-test-deployment.yaml
+          sed -i "s|\${REDIS_HOSTNAME}|${{ steps.redis-info.outputs.redis-hostname }}|g" k8s-test-deployment.yaml
+          sed -i "s|:latest|:${IMAGE_TAG}|g" k8s-test-deployment.yaml
+          
+          # Remove the secret creation sections since we created them separately
+          sed -i '/^---$/,$d' k8s-test-deployment.yaml
+          
+          # Update metadata for test environment
+          sed -i "s|name: remix-weather-app|name: remix-weather-test|g" k8s-test-deployment.yaml
+          sed -i "s|name: remix-weather-service|name: remix-weather-test-service|g" k8s-test-deployment.yaml
+          sed -i "s|replicas: 2|replicas: 1|g" k8s-test-deployment.yaml
+          
+          # Show the final deployment file for debugging
+          echo "Final deployment configuration:"
+          echo "================================"
+          cat k8s-test-deployment.yaml
+          echo "================================"
+          
+          # Apply the deployment
+          kubectl apply -f k8s-test-deployment.yaml --namespace=remix-weather-test
+
+      - name: Debug Pod Status
+        if: always()
+        run: |
+          echo "Checking pod status in remix-weather-test namespace..."
+          kubectl get pods -n remix-weather-test -o wide
+          
+          echo "Getting deployment status..."
+          kubectl get deployment remix-weather-test -n remix-weather-test -o yaml
+          
+          echo "Checking recent events..."
+          kubectl get events -n remix-weather-test --sort-by='.lastTimestamp' | tail -20
+
+      - name: Wait for Deployment with Enhanced Monitoring
+        run: |
+          echo "Starting deployment monitoring with enhanced debugging..."
+          
+          # Wait for deployment with timeout
+          timeout 600s bash -c '
+            while true; do
+              # Check deployment status
+              READY=$(kubectl get deployment remix-weather-test -n remix-weather-test -o jsonpath="{.status.readyReplicas}")
+              DESIRED=$(kubectl get deployment remix-weather-test -n remix-weather-test -o jsonpath="{.spec.replicas}")
+              
+              echo "Deployment status: ${READY:-0}/${DESIRED} replicas ready"
+              
+              # Check pod status
+              echo "Pod status:"
+              kubectl get pods -n remix-weather-test -o wide
+              
+              # If deployment is ready, exit successfully
+              if [ "${READY:-0}" -eq "${DESIRED}" ]; then
+                echo "✅ Deployment successful!"
+                exit 0
+              fi
+              
+              # Check for failed pods and describe them
+              FAILED_PODS=$(kubectl get pods -n remix-weather-test -o jsonpath="{.items[?(@.status.phase!=\"Running\")].metadata.name}")
+              if [ ! -z "$FAILED_PODS" ]; then
+                echo "Investigating failed/pending pods: $FAILED_PODS"
+                for pod in $FAILED_PODS; do
+                  echo "=== Describing pod: $pod ==="
+                  kubectl describe pod $pod -n remix-weather-test
+                  echo "=== Pod logs: $pod ==="
+                  kubectl logs $pod -n remix-weather-test --previous 2>/dev/null || echo "No previous logs"
+                  kubectl logs $pod -n remix-weather-test || echo "No current logs"
+                done
+              fi
+              
+              # Also check running pods that might be restarting
+              RUNNING_PODS=$(kubectl get pods -n remix-weather-test -o jsonpath="{.items[?(@.status.phase==\"Running\")].metadata.name}")
+              for pod in $RUNNING_PODS; do
+                RESTARTS=$(kubectl get pod $pod -n remix-weather-test -o jsonpath="{.status.containerStatuses[0].restartCount}")
+                if [ "$RESTARTS" -gt 0 ]; then
+                  echo "=== Pod $pod has restarted $RESTARTS times, checking logs ==="
+                  echo "Previous container logs:"
+                  kubectl logs $pod -n remix-weather-test --previous 2>/dev/null || echo "No previous logs available"
+                  echo "Current container logs:"
+                  kubectl logs $pod -n remix-weather-test || echo "No current logs available"
+                  echo "=== Container status ==="
+                  kubectl get pod $pod -n remix-weather-test -o jsonpath="{.status.containerStatuses[0]}" | jq '.'
+                fi
+              done
+              
+              sleep 10
+            done
+          ' || {
+            echo "❌ Deployment timed out or failed"
+            
+            # Final status check
+            echo "=== Final Deployment Status ==="
+            kubectl get deployment remix-weather-test -n remix-weather-test -o yaml
+            
+            echo "=== Final Pod Status ==="
+            kubectl get pods -n remix-weather-test -o wide
+            
+            echo "=== Recent Events ==="
+            kubectl get events -n remix-weather-test --sort-by='.lastTimestamp' | tail -30
+            
+            exit 1
+          }
+
+      - name: Get Service Information
+        id: service-info
+        run: |
+          # Wait for external IP
+          echo "Waiting for LoadBalancer IP..."
+          for i in {1..10}; do
+            EXTERNAL_IP=$(kubectl get service remix-weather-test-service -n remix-weather-test -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+            if [ ! -z "$EXTERNAL_IP" ]; then
+              echo "external-ip=$EXTERNAL_IP" >> $GITHUB_OUTPUT
+              echo "Test deployment accessible at: http://$EXTERNAL_IP"
+              break
+            fi
+            echo "Attempt $i/10: Waiting for external IP..."
+            sleep 30
+          done
+          
+          # Get pod status
+          kubectl get pods -n remix-weather-test -l app=remix-weather
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const imageTag = "${{ steps.image-tag.outputs.image-tag }}";
+            const imageSource = "${{ steps.image-tag.outputs.image-source }}";
+            const externalIp = "${{ steps.service-info.outputs.external-ip }}";
+            
+            let body = `## Test Deployment Successful\n\n`;
+            body += `**Environment:** Test\n`;
+            body += `**Image:** \`${{ steps.azure-resources.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:${imageTag}\`\n`;
+            body += `**Image Source:** \`${imageSource}\`\n`;
+            body += `**Namespace:** \`remix-weather-test\`\n\n`;
+            
+            if (externalIp) {
+              body += `**Application URL:** http://${externalIp}\n\n`;
+            } else {
+              body += `**Status:** Deployment successful, waiting for external IP\n\n`;
+            }
+            
+            body += `**Kubernetes Resources:**\n`;
+            body += `- Deployment: \`remix-weather-test\`\n`;
+            body += `- Service: \`remix-weather-test-service\` (LoadBalancer)\n`;
+            body += `- Replicas: 1\n\n`;
+            body += `Deployed from commit: \`${{ github.sha }}\``;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+  deploy-to-production:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    name: 'Deploy to Production Environment'
+    runs-on: ubuntu-latest
+    environment: production
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get ACR and AKS Information
+        id: azure-resources
+        run: |
+          # Get ACR login server dynamically
+          ACR_LOGIN_SERVER=$(az acr list --query "[?contains(name, 'cst8918')].loginServer" -o tsv | head -1)
+          ACR_NAME=$(az acr list --query "[?contains(name, 'cst8918')].name" -o tsv | head -1)
+          
+          # Get AKS prod cluster info
+          AKS_PROD_NAME=$(az aks list --query "[?contains(name, 'aks-prod')].name" -o tsv | head -1)
+          AKS_RESOURCE_GROUP=$(az aks list --query "[?contains(name, 'aks-prod')].resourceGroup" -o tsv | head -1)
+          
+          if [ -z "$ACR_LOGIN_SERVER" ] || [ -z "$AKS_PROD_NAME" ]; then
+            echo "Could not find required Azure resources"
+            exit 1
+          fi
+          
+          echo "acr-login-server=$ACR_LOGIN_SERVER" >> $GITHUB_OUTPUT
+          echo "acr-name=$ACR_NAME" >> $GITHUB_OUTPUT
+          echo "aks-prod-name=$AKS_PROD_NAME" >> $GITHUB_OUTPUT
+          echo "aks-resource-group=$AKS_RESOURCE_GROUP" >> $GITHUB_OUTPUT
+          
+          echo "Found resources:"
+          echo "- ACR: $ACR_LOGIN_SERVER"
+          echo "- AKS Prod: $AKS_PROD_NAME in $AKS_RESOURCE_GROUP"
+
+      - name: Get AKS Production Credentials
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ steps.azure-resources.outputs.aks-resource-group }} \
+            --name ${{ steps.azure-resources.outputs.aks-prod-name }} \
+            --overwrite-existing
+
+      - name: Configure AKS to Pull from ACR
+        run: |
+          # Alternative approach: Create image pull secret for ACR access
+          # This works with Contributor permissions (doesn't require Owner)
+          
+          # Get ACR login server and credentials
+          ACR_LOGIN_SERVER=$(az acr show --name cst8918acr8kp2cim9 --query "loginServer" --output tsv)
+          ACR_USERNAME=$(az acr credential show --name cst8918acr8kp2cim9 --query "username" --output tsv)
+          ACR_PASSWORD=$(az acr credential show --name cst8918acr8kp2cim9 --query "passwords[0].value" --output tsv)
+          
+          # Create docker registry secret in the namespace
+          kubectl create secret docker-registry acr-secret \
+            --docker-server=$ACR_LOGIN_SERVER \
+            --docker-username=$ACR_USERNAME \
+            --docker-password=$ACR_PASSWORD \
+            --namespace=remix-weather-prod \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Patch the default service account to use the image pull secret
+          kubectl patch serviceaccount default \
+            -p '{"imagePullSecrets": [{"name": "acr-secret"}]}' \
+            --namespace=remix-weather-prod
+          
+          echo "✅ ACR image pull secret configured for namespace"
+
+      - name: Create Kubernetes Namespace
+        run: |
+          kubectl create namespace remix-weather-prod --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Get Redis Connection Information
+        id: redis-info
+        run: |
+          # Get Redis hostname and password for production environment
+          REDIS_PROD_HOSTNAME=$(az redis list --query "[?contains(name, 'prod')].hostName" -o tsv | head -1)
+          REDIS_PROD_KEY=$(az redis list-keys --name $(az redis list --query "[?contains(name, 'prod')].name" -o tsv | head -1) --resource-group ${{ steps.azure-resources.outputs.aks-resource-group }} --query "primaryKey" -o tsv)
+          
+          echo "redis-hostname=$REDIS_PROD_HOSTNAME" >> $GITHUB_OUTPUT
+          echo "redis-password=$REDIS_PROD_KEY" >> $GITHUB_OUTPUT
+          echo "Found Redis: $REDIS_PROD_HOSTNAME"
+
+      - name: Determine Image Tag to Deploy
+        id: image-tag
+        run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          echo "Current commit short SHA: ${SHORT_SHA}"
+          
+          # Check if image exists for current commit
+          if az acr repository show --name cst8918acr8kp2cim9 --image remix-weather:${SHORT_SHA} > /dev/null 2>&1; then
+            echo "✅ Found image for current commit: ${SHORT_SHA}"
+            echo "image-tag=${SHORT_SHA}" >> $GITHUB_OUTPUT
+            echo "image-source=current-commit" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ No image found for current commit: ${SHORT_SHA}"
+            echo "Looking for most recent available image..."
+            
+            # Get the most recent image tag (excluding 'latest')
+            LATEST_TAG=$(az acr repository show-tags --name cst8918acr8kp2cim9 --repository remix-weather --output tsv --orderby time_desc --top 1 | grep -v '^latest$' | head -1)
+            
+            if [ ! -z "$LATEST_TAG" ] && [ "$LATEST_TAG" != "latest" ]; then
+              echo "✅ Using most recent available image: ${LATEST_TAG}"
+              echo "image-tag=${LATEST_TAG}" >> $GITHUB_OUTPUT
+              echo "image-source=latest-available" >> $GITHUB_OUTPUT
+            else
+              echo "✅ Using 'latest' tag as fallback"
+              echo "image-tag=latest" >> $GITHUB_OUTPUT
+              echo "image-source=latest-tag" >> $GITHUB_OUTPUT
+            fi
+          fi
+          
+          echo "Selected image tag: $(cat $GITHUB_OUTPUT | grep image-tag | cut -d= -f2)"
+
+      - name: Verify Docker Image Exists in ACR
+        run: |
+          IMAGE_TAG="${{ steps.image-tag.outputs.image-tag }}"
+          echo "Verifying image exists: ${{ steps.azure-resources.outputs.acr-login-server }}/remix-weather:${IMAGE_TAG}"
+          
+          # Check if the selected image exists in ACR
+          az acr repository show --name cst8918acr8kp2cim9 --image remix-weather:${IMAGE_TAG} || {
+            echo "ERROR: Image remix-weather:${IMAGE_TAG} not found in ACR"
+            echo "Available tags for remix-weather:"
+            az acr repository show-tags --name cst8918acr8kp2cim9 --repository remix-weather --output table
+            echo "All repositories in ACR:"
+            az acr repository list --name cst8918acr8kp2cim9 --output table
+            exit 1
+          }
+          
+          echo "✅ Docker image verified in ACR"
+          echo "Image source: ${{ steps.image-tag.outputs.image-source }}"
+
+      - name: Verify Required Secrets
+        run: |
+          echo "Verifying required secrets and configuration..."
+          
+          # Check if WEATHER_API_KEY is set
+          if [ -z "${{ secrets.WEATHER_API_KEY }}" ]; then
+            echo "ERROR: WEATHER_API_KEY secret is not set"
+            exit 1
+          fi
+          
+          # Check Redis connection details
+          echo "Redis Hostname: ${{ steps.redis-info.outputs.redis-hostname }}"
+          echo "Redis Password length: $(echo '${{ steps.redis-info.outputs.redis-password }}' | wc -c)"
+          
+          echo "✅ All secrets verified"
+
+      - name: Deploy Application Using Existing K8s Manifest
+        run: |
+          # Use the dynamically determined image tag
+          IMAGE_TAG="${{ steps.image-tag.outputs.image-tag }}"
+          echo "Deploying with image tag: ${IMAGE_TAG}"
+          
+          # Create Kubernetes secrets first
+          echo "Creating Kubernetes secrets for production environment..."
+          kubectl create secret generic redis-secret \
+            --from-literal=password="${{ steps.redis-info.outputs.redis-password }}" \
+            --namespace=remix-weather-prod \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic weather-api-secret \
+            --from-literal=api-key="${{ secrets.WEATHER_API_KEY }}" \
+            --namespace=remix-weather-prod \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Clean Up Previous Failed Deployments
+        run: |
+          echo "Cleaning up any existing failed deployments..."
+          
+          # Delete existing deployment if it exists (will be recreated with proper auth)
+          kubectl delete deployment remix-weather-prod --ignore-not-found=true --namespace=remix-weather-prod
+          
+          # Wait for pods to be fully removed
+          echo "Waiting for old pods to be removed..."
+          sleep 10
+          
+          echo "✅ Previous deployments cleaned up"
+
+      - name: Continue Production Deployment
+        run: |
+          # Use the dynamically determined image tag
+          IMAGE_TAG="${{ steps.image-tag.outputs.image-tag }}"
+          echo "Deploying with image tag: ${IMAGE_TAG}"
+          cp k8s/remix-weather-deployment.yaml k8s-prod-deployment.yaml
+          
+          # Replace variables in the deployment file (but skip secrets since we created them separately)
+          sed -i "s|\${ACR_LOGIN_SERVER}|${{ steps.azure-resources.outputs.acr-login-server }}|g" k8s-prod-deployment.yaml
+          sed -i "s|\${REDIS_HOSTNAME}|${{ steps.redis-info.outputs.redis-hostname }}|g" k8s-prod-deployment.yaml
+          sed -i "s|:latest|:${IMAGE_TAG}|g" k8s-prod-deployment.yaml
+          
+          # Remove the secret creation sections since we created them separately
+          sed -i '/^---$/,$d' k8s-prod-deployment.yaml
+          
+          # Update metadata for production environment
+          sed -i "s|name: remix-weather-app|name: remix-weather-prod|g" k8s-prod-deployment.yaml
+          sed -i "s|name: remix-weather-service|name: remix-weather-prod-service|g" k8s-prod-deployment.yaml
+          
+          # Show the final deployment file for debugging
+          echo "Final deployment configuration:"
+          echo "================================"
+          cat k8s-prod-deployment.yaml
+          echo "================================"
+          
+          # Apply the deployment
+          kubectl apply -f k8s-prod-deployment.yaml --namespace=remix-weather-prod
+
+      - name: Debug Pod Status
+        if: always()
+        run: |
+          echo "Checking pod status in remix-weather-prod namespace..."
+          kubectl get pods -n remix-weather-prod -o wide
+          
+          echo "Getting deployment status..."
+          kubectl get deployment remix-weather-prod -n remix-weather-prod -o yaml
+          
+          echo "Checking recent events..."
+          kubectl get events -n remix-weather-prod --sort-by='.lastTimestamp' | tail -20
+
+      - name: Wait for Deployment with Enhanced Monitoring
+        run: |
+          echo "Starting deployment monitoring with enhanced debugging..."
+          
+          # Wait for deployment with timeout
+          timeout 900s bash -c '
+            while true; do
+              # Check deployment status
+              READY=$(kubectl get deployment remix-weather-prod -n remix-weather-prod -o jsonpath="{.status.readyReplicas}")
+              DESIRED=$(kubectl get deployment remix-weather-prod -n remix-weather-prod -o jsonpath="{.spec.replicas}")
+              
+              echo "Deployment status: ${READY:-0}/${DESIRED} replicas ready"
+              
+              # Check pod status
+              echo "Pod status:"
+              kubectl get pods -n remix-weather-prod -o wide
+              
+              # If deployment is ready, exit successfully
+              if [ "${READY:-0}" -eq "${DESIRED}" ]; then
+                echo "✅ Deployment successful!"
+                exit 0
+              fi
+              
+              # Check for failed pods and describe them
+              FAILED_PODS=$(kubectl get pods -n remix-weather-prod -o jsonpath="{.items[?(@.status.phase!=\"Running\")].metadata.name}")
+              if [ ! -z "$FAILED_PODS" ]; then
+                echo "Investigating failed/pending pods: $FAILED_PODS"
+                for pod in $FAILED_PODS; do
+                  echo "=== Describing pod: $pod ==="
+                  kubectl describe pod $pod -n remix-weather-prod
+                  echo "=== Pod logs: $pod ==="
+                  kubectl logs $pod -n remix-weather-prod --previous 2>/dev/null || echo "No previous logs"
+                  kubectl logs $pod -n remix-weather-prod || echo "No current logs"
+                done
+              fi
+              
+              # Also check running pods that might be restarting
+              RUNNING_PODS=$(kubectl get pods -n remix-weather-prod -o jsonpath="{.items[?(@.status.phase==\"Running\")].metadata.name}")
+              for pod in $RUNNING_PODS; do
+                RESTARTS=$(kubectl get pod $pod -n remix-weather-prod -o jsonpath="{.status.containerStatuses[0].restartCount}")
+                if [ "$RESTARTS" -gt 0 ]; then
+                  echo "=== Pod $pod has restarted $RESTARTS times, checking logs ==="
+                  echo "Previous container logs:"
+                  kubectl logs $pod -n remix-weather-prod --previous 2>/dev/null || echo "No previous logs available"
+                  echo "Current container logs:"
+                  kubectl logs $pod -n remix-weather-prod || echo "No current logs available"
+                  echo "=== Container status ==="
+                  kubectl get pod $pod -n remix-weather-prod -o jsonpath="{.status.containerStatuses[0]}" | jq '.'
+                fi
+              done
+              
+              sleep 15
+            done
+          ' || {
+            echo "❌ Deployment timed out or failed"
+            
+            # Final status check
+            echo "=== Final Deployment Status ==="
+            kubectl get deployment remix-weather-prod -n remix-weather-prod -o yaml
+            
+            echo "=== Final Pod Status ==="
+            kubectl get pods -n remix-weather-prod -o wide
+            
+            echo "=== Recent Events ==="
+            kubectl get events -n remix-weather-prod --sort-by='.lastTimestamp' | tail -30
+            
+            exit 1
+          }
+
+      - name: Get Service Information
+        id: service-info
+        run: |
+          # Wait for external IP
+          echo "Waiting for LoadBalancer IP..."
+          for i in {1..15}; do
+            EXTERNAL_IP=$(kubectl get service remix-weather-prod-service -n remix-weather-prod -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+            if [ ! -z "$EXTERNAL_IP" ]; then
+              echo "external-ip=$EXTERNAL_IP" >> $GITHUB_OUTPUT
+              echo "Production deployment accessible at: http://$EXTERNAL_IP"
+              break
+            fi
+            echo "Attempt $i/15: Waiting for external IP..."
+            sleep 30
+          done
+          
+          # Get pod status
+          kubectl get pods -n remix-weather-prod -l app=remix-weather
+          
+          # Output deployment summary
+          echo "Deployment Summary:"
+          kubectl get all -n remix-weather-prod
+
+      - name: Deployment Summary
+        run: |
+          echo "## Production Deployment Complete"
+          echo "**Image:** ${{ steps.azure-resources.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:$(echo ${{ github.sha }} | cut -c1-7)"
+          echo "**Replicas:** 2"
+          echo "**Namespace:** remix-weather-prod"
+          if [ ! -z "${{ steps.service-info.outputs.external-ip }}" ]; then
+            echo "**URL:** http://${{ steps.service-info.outputs.external-ip }}"
+          fi
+          echo "**Commit:** ${{ github.sha }}"
