@@ -1,165 +1,174 @@
-# CST8918 Final Project - Remix Weather App on Azure
+## CST8918 Final Project – Remix Weather App on Azure
 
-A complete Infrastructure as Code (IaC) solution for deploying a Remix Weather application on Azure Kubernetes Service (AKS) using Terraform with automated CI/CD pipelines through GitHub Actions.
+A fully automated Infrastructure as Code (IaC) solution for deploying the Remix Weather Application on Azure Kubernetes Service (AKS) using Terraform, with CI/CD automation powered by GitHub Actions.
 
+## 👥 Team Members
 
+Nirajan Khadka: https://github.com/khad0062- 
+Samir Mishra : https://github.com/mishsamir  -mishsamir
+Sai Karthick Kalidoss - https://github.com/Saikarthick07 -Saikarthick07
 
-##  Team Members
-     Nirajan Khadka: https://github.com/khad0062- 
-     Samir Mishra : https://github.com/mishsamir  -mishsamir
-     Sai Karthick Kalidoss - https://github.com/Saikarthick07 -Saikarthick07
+## 📌 Project Overview
 
-##  Project Overview
+This project demonstrates the implementation of modern DevOps practices, including:
+- Infrastructure as Code with Terraform
+- Application Containerization using Docker
+- Kubernetes Orchestration on Azure AKS
+- CI/CD Automation via GitHub Actions
+- Multi-Environment Deployments (Test / Production)
+- Azure OIDC Authentication for secure integration
 
-This project showcases modern DevOps practices by implementing:
-
-- **Infrastructure as Code** using Terraform
-- **Containerized Application** with Docker
-- **Kubernetes Orchestration** on Azure AKS
-- **CI/CD Automation** with GitHub Actions
-- **Multi-Environment Deployment** (Test/Production)
-- **Azure Cloud Integration** with OIDC authentication
-
-## Architecture Overview
+## 🗺 Architecture Overview
 
 ```
 ├── .github/workflows/       # GitHub Actions CI/CD Pipelines
-│   ├── terraform-static-analysis.yml    # Code quality & security
-│   ├── infra-ci-cd.yml                  # PR validation & planning
-│   ├── infra-ci-cd-terraformapply.yml   # Infrastructure deployment
-│   ├── build-push-weather-app.yml       # Docker build & push
-│   └── deploy-remix-to-aks.yml          # AKS application deployment
+│   ├── terraform-static-analysis.yml     # Code quality & security checks
+│   ├── infra-ci-cd.yml                   # PR validation & planning
+│   ├── infra-ci-cd-terraformapply.yml    # Infrastructure deployment
+│   ├── build-push-weather-app.yml        # Docker build & push
+│   └── deploy-remix-to-aks.yml           # AKS application deployment
 │
-├── infra/                   # Terraform Infrastructure
-│   ├── main.tf             # Root module configuration
-│   ├── variables.tf        # Input variables
-│   ├── outputs.tf          # Output values
-│   ├── terraform.tfvars    # Variable values
+├── infra/                   # Terraform Infrastructure Code
+│   ├── main.tf              # Root module configuration
+│   ├── variables.tf         # Input variables
+│   ├── outputs.tf           # Output values
+│   ├── terraform.tfvars     # Variable definitions
 │   │
-│   ├── backend/            # Terraform State Management
-│   │   ├── main.tf         # Azure Storage for remote state
+│   ├── backend/             # Terraform State Management
+│   │   ├── main.tf          # Azure Storage for remote state
 │   │   ├── variables.tf
 │   │   └── outputs.tf
 │   │
-│   ├── network/            # Base Network Infrastructure
-│   │   ├── main.tf         # VNet with 4 subnets
+│   ├── network/             # Network Infrastructure
+│   │   ├── main.tf          # VNet & Subnets
 │   │   ├── variables.tf
 │   │   └── outputs.tf
 │   │
-│   ├── aks/                # Kubernetes Clusters
-│   │   ├── main.tf         # Test & Production AKS clusters
+│   ├── aks/                 # AKS Cluster Definitions
+│   │   ├── main.tf          # Test & Production clusters
 │   │   ├── variables.tf
 │   │   └── outputs.tf
 │   │
-│   └── remix-weather/      # Application Infrastructure
-│       ├── main.tf         # Azure Container Registry & Redis
+│   └── remix-weather/       # Application Infrastructure
+│       ├── main.tf          # Azure Container Registry & Redis
 │       ├── variables.tf
 │       └── outputs.tf
 │
-├── pulumi-app/             # Remix Weather Application
-│   ├── Dockerfile          # Container configuration
-│   ├── package.json        # Node.js dependencies
-│   ├── app/                # Remix application code
-│   └── public/             # Static assets
+├── pulumi-app/              # Remix Weather Application
+│   ├── Dockerfile           # Container image configuration
+│   ├── package.json         # Node.js dependencies
+│   ├── app/                 # Remix application source
+│   └── public/              # Static assets
 │
-└── k8s/                    # Kubernetes Manifests
-    └── remix-weather-deployment.yaml    # Application deployment
+└── k8s/                     # Kubernetes Manifests
+    └── remix-weather-deployment.yaml    # Application deployment spec
+
 ```
 
-##  Azure Resources Created
+## ☁ Azure Resources Provisioned
 
-### Network Infrastructure
-- **Virtual Network**: 10.0.0.0/14 address space in Canada Central
-- **Subnets**: 
-  - Production: 10.0.0.0/16
-  - Test: 10.1.0.0/16 
-  - Development: 10.2.0.0/16
-  - Admin: 10.3.0.0/16
+## Network Infrastructure
 
-### Compute Resources
-- **AKS Clusters**: 
-  - Test environment (1 node, Kubernetes v1.32.6)
-  - Production environment (2 nodes, Kubernetes v1.32.6)
-- **Node Size**: Standard_B2s 
-- **Auto-scaling**: Enabled with environment-specific limits
+- Virtual Network: 10.0.0.0/14 (Canada Central)
+- Subnets:
+Production: 10.0.0.0/16
+Test: 10.1.0.0/16
+Development: 10.2.0.0/16
+Admin: 10.3.0.0/16
 
-### Container & Storage
-- **Azure Container Registry**: Basic SKU with admin access
-- **Redis Cache**: For application caching (test & production instances)
-- **Storage Account**: Terraform state management with blob storage
+## Compute Resources
 
-### Security & Authentication
-- **Azure OIDC Integration**: Passwordless authentication for GitHub Actions
-- **Service Principals**: Contributor and Reader roles with federated credentials
-- **Managed Identities**: For AKS cluster authentication
+- ## AKS Clusters:
 
+Test – 1 node, Kubernetes v1.32.6
+Production – 2 nodes, Kubernetes v1.32.6
 
-### GitHub Actions Workflows
-#### 1. Terraform Static Analysis
-- **Trigger**: Push to any branch
-- **Actions**: `terraform fmt`, `terraform validate`, `tfsec` security scanning
-- **Matrix Strategy**: Tests across multiple Terraform versions
+- Node Size: Standard_B2s
+- Auto-scaling: Environment-specific limits enabled
 
-#### 2. Infrastructure PR Validation
-- **Trigger**: Pull request to main branch
-- **Actions**: TFLint validation, terraform plan with cost estimation
-- **Features**: PR commenting with plan details
+## Container & Storage
 
-#### 3. Infrastructure Deployment
-- **Trigger**: Push to main branch (after PR merge)
-- **Actions**: `terraform apply` with automatic state management
-- **Features**: Enhanced state lock handling, retry mechanisms
+- Azure Container Registry: Basic SKU, admin-enabled
+- Redis Cache: For caching in both Test & Production
+- Storage Account: Terraform state stored in blob storage
 
-#### 4. Docker Build & Push
-- **Trigger**: PR to main with changes to `pulumi-app/**`
-- **Actions**: Build Docker image, push to ACR, security scanning
-- **Features**: Multi-tag strategy (SHA, short SHA, latest)
+## Security & Authentication
 
-#### 5. AKS Application Deployment
-- **Trigger**: 
-  - **Test Environment**: PR to main with app changes
-  - **Production Environment**: Push to main with app changes
-- **Actions**: Deploy to respective AKS clusters using existing K8s manifests
-- **Features**: Environment-specific configuration, health checks
+- OIDC Integration: GitHub Actions passwordless authentication
+- Service Principals: Contributor & Reader roles with federated credentials
+- Managed Identities: For AKS authentication
 
-## 🛠️ Prerequisites
+## ⚙️ GitHub Actions Workflows
 
-### Required Tools
-- **Azure CLI** (authenticated with your subscription)
-- **Terraform** >= 1.0
-- **Docker** (for local testing)
-- **kubectl** (for Kubernetes management)
-- **Git** for version control
+1️⃣ Terraform Static Analysis
 
+- Trigger: Any branch push
+- Actions: terraform fmt, terraform validate, tfsec security scan
+- Matrix Testing: Multiple Terraform versions
 
-##  Getting Started
+2️⃣ Infrastructure PR Validation
 
-### 1. Clone Repository
-```bash
+- Trigger: PR to main
+- Actions: tflint, terraform plan with cost estimation
+- Output: PR comment with plan details
+
+3️⃣ Infrastructure Deployment
+
+- Trigger: Push to main after PR merge
+- Actions: terraform apply with state management
+- Resilience: Enhanced locking & retry handling
+
+4️⃣ Docker Build & Push
+
+- Trigger: PR to main affecting pulumi-app/**
+- Actions: Build image, push to ACR, security scan
+- Tags: Commit SHA, short SHA, latest
+
+5️⃣ AKS Application Deployment
+
+- Trigger:
+Test: PR to main with app changes
+Production: Push to main with app changes
+- Actions: Deploy to respective AKS cluster
+- Features: Environment configs & health checks
+
+## 🛠 Prerequisites
+
+- Azure CLI (logged in to subscription)
+- Terraform ≥ v1.0
+- Docker (for local testing)
+- kubectl (Kubernetes CLI)
+- Git (version control)
+
+## 🚀 Getting Started
+
+1. Clone the Repository
+```
 git clone https://github.com/mishsamir/Final-Project-CST8918_Group6.git
 cd Final-Project-CST8918_300
 ```
 
-### 2. Configure Azure Authentication
+2. Configure Azure Authentication
 
-#### Create Service Principals
-```bash
-# Create Contributor service principal
+Create Service Principals
+```
+# Contributor role
 az ad sp create-for-rbac --name "CST8918-Final-Contributor" \
   --role Contributor \
   --scopes /subscriptions/YOUR_SUBSCRIPTION_ID
 
-# Create Reader service principal  
+# Reader role
 az ad sp create-for-rbac --name "CST8918-Final-Reader" \
   --role Reader \
   --scopes /subscriptions/YOUR_SUBSCRIPTION_ID
 ```
 
-#### Configure GitHub Secrets
-Add the following secrets to your GitHub repository:
-- `AZURE_CLIENT_ID`: Service principal client ID
-- `AZURE_TENANT_ID`: Azure tenant ID
-- `AZURE_SUBSCRIPTION_ID`: Azure subscription ID
-- `ARM_ACCESS_KEY`: Storage account access key (for Terraform state)
-- `WEATHER_API_KEY`: OpenWeatherMap API key (optional)
+### 🔐 GitHub Secrets
 
+| Secret Name             | Description                                      |
+|-------------------------|--------------------------------------------------|
+| `AZURE_CLIENT_ID`       | Service Principal Client ID                      |
+| `AZURE_TENANT_ID`       | Azure Tenant ID                                  |
+| `AZURE_SUBSCRIPTION_ID` | Azure Subscription ID                            |
+| `ARM_ACCESS_KEY`        | Storage Account Access Key (Terraform state)     |
+| `WEATHER_API_KEY`       | OpenWeatherMap API key *(optional)*              |
