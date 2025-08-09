@@ -91,32 +91,145 @@ jobs:
         run: |
           kubectl create namespace remix-weather-test --dry-run=client -o yaml | kubectl apply -f -
 
+      - name: Verify Docker Image Exists in ACR
+        run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          echo "Checking if image exists: ${{ steps.azure-resources.outputs.acr-login-server }}/remix-weather:${SHORT_SHA}"
+          
+          # Check if the image exists in ACR
+          az acr repository show --name cst8918acr8kp2cim9 --image remix-weather:${SHORT_SHA} || {
+            echo "ERROR: Image remix-weather:${SHORT_SHA} not found in ACR"
+            echo "Available tags for remix-weather:"
+            az acr repository show-tags --name cst8918acr8kp2cim9 --repository remix-weather --output table
+            echo "All repositories in ACR:"
+            az acr repository list --name cst8918acr8kp2cim9 --output table
+            exit 1
+          }
+          
+          echo "✅ Docker image verified in ACR"
+
+      - name: Verify Required Secrets
+        run: |
+          echo "Verifying required secrets and configuration..."
+          
+          # Check if WEATHER_API_KEY is set
+          if [ -z "${{ secrets.WEATHER_API_KEY }}" ]; then
+            echo "ERROR: WEATHER_API_KEY secret is not set"
+            exit 1
+          fi
+          
+          # Check Redis connection details
+          echo "Redis Hostname: ${{ steps.redis-info.outputs.redis-hostname }}"
+          echo "Redis Password length: $(echo '${{ steps.redis-info.outputs.redis-password }}' | wc -c)"
+          
+          echo "✅ All secrets verified"
+
       - name: Deploy Application Using Existing K8s Manifest
         run: |
           # Get short commit SHA for image tag
           SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
           
+          # Create Kubernetes secrets first
+          echo "Creating Kubernetes secrets for test environment..."
+          kubectl create secret generic redis-secret \
+            --from-literal=password="${{ steps.redis-info.outputs.redis-password }}" \
+            --namespace=remix-weather-test \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic weather-api-secret \
+            --from-literal=api-key="${{ secrets.WEATHER_API_KEY }}" \
+            --namespace=remix-weather-test \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
           # Copy and customize the K8s deployment file for test environment
           cp k8s/remix-weather-deployment.yaml k8s-test-deployment.yaml
           
-          # Replace variables in the deployment file
+          # Replace variables in the deployment file (but skip secrets since we created them separately)
           sed -i "s|\${ACR_LOGIN_SERVER}|${{ steps.azure-resources.outputs.acr-login-server }}|g" k8s-test-deployment.yaml
           sed -i "s|\${REDIS_HOSTNAME}|${{ steps.redis-info.outputs.redis-hostname }}|g" k8s-test-deployment.yaml
-          sed -i "s|\${REDIS_PASSWORD}|${{ steps.redis-info.outputs.redis-password }}|g" k8s-test-deployment.yaml
-          sed -i "s|\${WEATHER_API_KEY}|${{ secrets.WEATHER_API_KEY }}|g" k8s-test-deployment.yaml
           sed -i "s|:latest|:${SHORT_SHA}|g" k8s-test-deployment.yaml
+          
+          # Remove the secret creation sections since we created them separately
+          sed -i '/^---$/,$d' k8s-test-deployment.yaml
           
           # Update metadata for test environment
           sed -i "s|name: remix-weather-app|name: remix-weather-test|g" k8s-test-deployment.yaml
           sed -i "s|name: remix-weather-service|name: remix-weather-test-service|g" k8s-test-deployment.yaml
           sed -i "s|replicas: 2|replicas: 1|g" k8s-test-deployment.yaml
           
-          # Use kubectl to apply with namespace override instead of modifying YAML
+          # Show the final deployment file for debugging
+          echo "Final deployment configuration:"
+          echo "================================"
+          cat k8s-test-deployment.yaml
+          echo "================================"
+          
+          # Apply the deployment
           kubectl apply -f k8s-test-deployment.yaml --namespace=remix-weather-test
 
-      - name: Wait for Deployment
+      - name: Debug Pod Status
+        if: always()
         run: |
-          kubectl rollout status deployment/remix-weather-test -n remix-weather-test --timeout=300s
+          echo "Checking pod status in remix-weather-test namespace..."
+          kubectl get pods -n remix-weather-test -o wide
+          
+          echo "Getting deployment status..."
+          kubectl get deployment remix-weather-test -n remix-weather-test -o yaml
+          
+          echo "Checking recent events..."
+          kubectl get events -n remix-weather-test --sort-by='.lastTimestamp' | tail -20
+
+      - name: Wait for Deployment with Enhanced Monitoring
+        run: |
+          echo "Starting deployment monitoring with enhanced debugging..."
+          
+          # Wait for deployment with timeout
+          timeout 600s bash -c '
+            while true; do
+              # Check deployment status
+              READY=$(kubectl get deployment remix-weather-test -n remix-weather-test -o jsonpath="{.status.readyReplicas}")
+              DESIRED=$(kubectl get deployment remix-weather-test -n remix-weather-test -o jsonpath="{.spec.replicas}")
+              
+              echo "Deployment status: ${READY:-0}/${DESIRED} replicas ready"
+              
+              # Check pod status
+              echo "Pod status:"
+              kubectl get pods -n remix-weather-test -o wide
+              
+              # If deployment is ready, exit successfully
+              if [ "${READY:-0}" -eq "${DESIRED}" ]; then
+                echo "✅ Deployment successful!"
+                exit 0
+              fi
+              
+              # Check for failed pods and describe them
+              FAILED_PODS=$(kubectl get pods -n remix-weather-test -o jsonpath="{.items[?(@.status.phase!=\"Running\")].metadata.name}")
+              if [ ! -z "$FAILED_PODS" ]; then
+                echo "Investigating failed/pending pods: $FAILED_PODS"
+                for pod in $FAILED_PODS; do
+                  echo "=== Describing pod: $pod ==="
+                  kubectl describe pod $pod -n remix-weather-test
+                  echo "=== Pod logs: $pod ==="
+                  kubectl logs $pod -n remix-weather-test --previous 2>/dev/null || echo "No previous logs"
+                  kubectl logs $pod -n remix-weather-test || echo "No current logs"
+                done
+              fi
+              
+              sleep 10
+            done
+          ' || {
+            echo "❌ Deployment timed out or failed"
+            
+            # Final status check
+            echo "=== Final Deployment Status ==="
+            kubectl get deployment remix-weather-test -n remix-weather-test -o yaml
+            
+            echo "=== Final Pod Status ==="
+            kubectl get pods -n remix-weather-test -o wide
+            
+            echo "=== Recent Events ==="
+            kubectl get events -n remix-weather-test --sort-by='.lastTimestamp' | tail -30
+            
+            exit 1
+          }
 
       - name: Get Service Information
         id: service-info
@@ -233,35 +346,144 @@ jobs:
           echo "redis-password=$REDIS_PROD_KEY" >> $GITHUB_OUTPUT
           echo "Found Redis: $REDIS_PROD_HOSTNAME"
 
-      - name: Create Kubernetes Namespace
+      - name: Verify Docker Image Exists in ACR
         run: |
-          kubectl create namespace remix-weather-prod --dry-run=client -o yaml | kubectl apply -f -
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          echo "Checking if image exists: ${{ steps.azure-resources.outputs.acr-login-server }}/remix-weather:${SHORT_SHA}"
+          
+          # Check if the image exists in ACR
+          az acr repository show --name cst8918acr8kp2cim9 --image remix-weather:${SHORT_SHA} || {
+            echo "ERROR: Image remix-weather:${SHORT_SHA} not found in ACR"
+            echo "Available tags for remix-weather:"
+            az acr repository show-tags --name cst8918acr8kp2cim9 --repository remix-weather --output table
+            echo "All repositories in ACR:"
+            az acr repository list --name cst8918acr8kp2cim9 --output table
+            exit 1
+          }
+          
+          echo "✅ Docker image verified in ACR"
+
+      - name: Verify Required Secrets
+        run: |
+          echo "Verifying required secrets and configuration..."
+          
+          # Check if WEATHER_API_KEY is set
+          if [ -z "${{ secrets.WEATHER_API_KEY }}" ]; then
+            echo "ERROR: WEATHER_API_KEY secret is not set"
+            exit 1
+          fi
+          
+          # Check Redis connection details
+          echo "Redis Hostname: ${{ steps.redis-info.outputs.redis-hostname }}"
+          echo "Redis Password length: $(echo '${{ steps.redis-info.outputs.redis-password }}' | wc -c)"
+          
+          echo "✅ All secrets verified"
 
       - name: Deploy Application Using Existing K8s Manifest
         run: |
           # Get short commit SHA for image tag
           SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
           
+          # Create Kubernetes secrets first
+          echo "Creating Kubernetes secrets for production environment..."
+          kubectl create secret generic redis-secret \
+            --from-literal=password="${{ steps.redis-info.outputs.redis-password }}" \
+            --namespace=remix-weather-prod \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic weather-api-secret \
+            --from-literal=api-key="${{ secrets.WEATHER_API_KEY }}" \
+            --namespace=remix-weather-prod \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
           # Copy and customize the K8s deployment file for production environment
           cp k8s/remix-weather-deployment.yaml k8s-prod-deployment.yaml
           
-          # Replace variables in the deployment file
+          # Replace variables in the deployment file (but skip secrets since we created them separately)
           sed -i "s|\${ACR_LOGIN_SERVER}|${{ steps.azure-resources.outputs.acr-login-server }}|g" k8s-prod-deployment.yaml
           sed -i "s|\${REDIS_HOSTNAME}|${{ steps.redis-info.outputs.redis-hostname }}|g" k8s-prod-deployment.yaml
-          sed -i "s|\${REDIS_PASSWORD}|${{ steps.redis-info.outputs.redis-password }}|g" k8s-prod-deployment.yaml
-          sed -i "s|\${WEATHER_API_KEY}|${{ secrets.WEATHER_API_KEY }}|g" k8s-prod-deployment.yaml
           sed -i "s|:latest|:${SHORT_SHA}|g" k8s-prod-deployment.yaml
+          
+          # Remove the secret creation sections since we created them separately
+          sed -i '/^---$/,$d' k8s-prod-deployment.yaml
           
           # Update metadata for production environment
           sed -i "s|name: remix-weather-app|name: remix-weather-prod|g" k8s-prod-deployment.yaml
           sed -i "s|name: remix-weather-service|name: remix-weather-prod-service|g" k8s-prod-deployment.yaml
           
-          # Use kubectl to apply with namespace override instead of modifying YAML
+          # Show the final deployment file for debugging
+          echo "Final deployment configuration:"
+          echo "================================"
+          cat k8s-prod-deployment.yaml
+          echo "================================"
+          
+          # Apply the deployment
           kubectl apply -f k8s-prod-deployment.yaml --namespace=remix-weather-prod
 
-      - name: Wait for Deployment
+      - name: Debug Pod Status
+        if: always()
         run: |
-          kubectl rollout status deployment/remix-weather-prod -n remix-weather-prod --timeout=600s
+          echo "Checking pod status in remix-weather-prod namespace..."
+          kubectl get pods -n remix-weather-prod -o wide
+          
+          echo "Getting deployment status..."
+          kubectl get deployment remix-weather-prod -n remix-weather-prod -o yaml
+          
+          echo "Checking recent events..."
+          kubectl get events -n remix-weather-prod --sort-by='.lastTimestamp' | tail -20
+
+      - name: Wait for Deployment with Enhanced Monitoring
+        run: |
+          echo "Starting deployment monitoring with enhanced debugging..."
+          
+          # Wait for deployment with timeout
+          timeout 900s bash -c '
+            while true; do
+              # Check deployment status
+              READY=$(kubectl get deployment remix-weather-prod -n remix-weather-prod -o jsonpath="{.status.readyReplicas}")
+              DESIRED=$(kubectl get deployment remix-weather-prod -n remix-weather-prod -o jsonpath="{.spec.replicas}")
+              
+              echo "Deployment status: ${READY:-0}/${DESIRED} replicas ready"
+              
+              # Check pod status
+              echo "Pod status:"
+              kubectl get pods -n remix-weather-prod -o wide
+              
+              # If deployment is ready, exit successfully
+              if [ "${READY:-0}" -eq "${DESIRED}" ]; then
+                echo "✅ Deployment successful!"
+                exit 0
+              fi
+              
+              # Check for failed pods and describe them
+              FAILED_PODS=$(kubectl get pods -n remix-weather-prod -o jsonpath="{.items[?(@.status.phase!=\"Running\")].metadata.name}")
+              if [ ! -z "$FAILED_PODS" ]; then
+                echo "Investigating failed/pending pods: $FAILED_PODS"
+                for pod in $FAILED_PODS; do
+                  echo "=== Describing pod: $pod ==="
+                  kubectl describe pod $pod -n remix-weather-prod
+                  echo "=== Pod logs: $pod ==="
+                  kubectl logs $pod -n remix-weather-prod --previous 2>/dev/null || echo "No previous logs"
+                  kubectl logs $pod -n remix-weather-prod || echo "No current logs"
+                done
+              fi
+              
+              sleep 15
+            done
+          ' || {
+            echo "❌ Deployment timed out or failed"
+            
+            # Final status check
+            echo "=== Final Deployment Status ==="
+            kubectl get deployment remix-weather-prod -n remix-weather-prod -o yaml
+            
+            echo "=== Final Pod Status ==="
+            kubectl get pods -n remix-weather-prod -o wide
+            
+            echo "=== Recent Events ==="
+            kubectl get events -n remix-weather-prod --sort-by='.lastTimestamp' | tail -30
+            
+            exit 1
+          }
 
       - name: Get Service Information
         id: service-info
