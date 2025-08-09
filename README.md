@@ -18,6 +18,11 @@ This project demonstrates the implementation of modern DevOps practices, includi
 - Multi-Environment Deployments (Test / Production)
 - Azure OIDC Authentication for secure integration
 
+## Architecture Diagram
+
+![Architecture Diagram](https://github.com/mishsamir/Final-Project-CST8918_Group6/blob/testing-branch/Screenshot/Workflow_Diag.png)
+
+
 ## 🗺 Architecture Overview
 
 ```
