@@ -1,5 +1,5 @@
 # base node image
-FROM node:lts-alpine as base
+FROM node:lts-alpine AS base
 
 # update the openssl package to apply a security patch @see CVE-2023-6129⁠
 RUN apk -U add --update-cache openssl
@@ -8,7 +8,7 @@ RUN apk -U add --update-cache openssl
 ENV NODE_ENV=production
 
 # Install all node_modules, including dev dependencies
-FROM base as deps
+FROM base AS deps
 
 WORKDIR /usr/src/app
 
@@ -16,7 +16,7 @@ ADD package.json ./
 RUN npm install --include=dev
 
 # Setup production node_modules
-FROM base as production-deps
+FROM base AS production-deps
 
 WORKDIR /usr/src/app
 
@@ -25,19 +25,33 @@ ADD package.json ./
 RUN npm prune --omit=dev
 
 # Build the app
-FROM base as build
+FROM base AS build
 
 WORKDIR /usr/src/app
 
 COPY --from=deps /usr/src/app/node_modules /usr/src/app/node_modules
 
-ADD . .
-RUN npm run build
+# Copy all source files needed for build
+COPY package.json ./
+COPY tsconfig.json ./
+COPY remix.config.js ./
+COPY remix.env.d.ts ./
+COPY app ./app
+COPY public ./public
+
+# Set NODE_ENV to development for build process
+ENV NODE_ENV=development
+
+# Run build with error handling
+RUN npm run build || (echo "Build failed. Checking environment..." && ls -la && echo "Node version:" && node --version && echo "NPM version:" && npm --version && exit 1)
 
 # Finally, build the production image with minimal footprint
 FROM base
 
 WORKDIR /usr/src/app
+
+# Reset NODE_ENV to production for runtime
+ENV NODE_ENV=production
 
 COPY --from=production-deps /usr/src/app/node_modules /usr/src/app/node_modules
 
