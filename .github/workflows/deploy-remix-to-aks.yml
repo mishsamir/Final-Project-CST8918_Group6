@@ -111,11 +111,8 @@ jobs:
           sed -i "s|name: remix-weather-service|name: remix-weather-test-service|g" k8s-test-deployment.yaml
           sed -i "s|replicas: 2|replicas: 1|g" k8s-test-deployment.yaml
           
-          # Add namespace to all resources
-          sed -i '/metadata:/a\  namespace: remix-weather-test' k8s-test-deployment.yaml
-          
-          # Apply the deployment
-          kubectl apply -f k8s-test-deployment.yaml
+          # Use kubectl to apply with namespace override instead of modifying YAML
+          kubectl apply -f k8s-test-deployment.yaml --namespace=remix-weather-test
 
       - name: Wait for Deployment
         run: |
@@ -259,11 +256,8 @@ jobs:
           sed -i "s|name: remix-weather-app|name: remix-weather-prod|g" k8s-prod-deployment.yaml
           sed -i "s|name: remix-weather-service|name: remix-weather-prod-service|g" k8s-prod-deployment.yaml
           
-          # Add namespace to all resources
-          sed -i '/metadata:/a\  namespace: remix-weather-prod' k8s-prod-deployment.yaml
-          
-          # Apply the deployment
-          kubectl apply -f k8s-prod-deployment.yaml
+          # Use kubectl to apply with namespace override instead of modifying YAML
+          kubectl apply -f k8s-prod-deployment.yaml --namespace=remix-weather-prod
 
       - name: Wait for Deployment
         run: |
