@@ -1,13 +1,11 @@
 # base node image
-FROM node:lts-alpine A# Build with production NODE_ENV for correct JSX transforms
-ENV NODE_ENV=production
+FROM node:lts-alpine AS base
 
-# Run build with error handling  
-RUN npm run build || (echo "Build failed. Checking environment..." && ls -la && echo "Node version:" && node --version && echo "NPM version:" && npm --version && exit 1)
 # update the openssl package to apply a security patch @see CVE-2023-6129⁠
 RUN apk -U add --update-cache openssl
 
 # set for base and all layer that inherit from it
+ENV NODE_ENV=production
 ENV NODE_ENV=production
 
 # Install all node_modules, including dev dependencies
