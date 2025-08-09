@@ -78,7 +78,6 @@ This project is specifically designed for Azure for Students subscriptions:
 1. **Azure CLI** installed and authenticated
 2. **Terraform** >= 1.0 installed
 3. **Docker** (for building application images)
-4. **Azure for Students** subscription active
 5. **Git** for version control
 
 ## 🚀 Deployment Instructions

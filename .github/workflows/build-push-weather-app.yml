@@ -1,0 +1,123 @@
+name: Build and Push Weather App Docker Image
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'pulumi-app/**'
+      - 'Dockerfile'
+      - '.dockerignore'
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+env:
+  ARM_CLIENT_ID: "${{ secrets.AZURE_CLIENT_ID }}"
+  ARM_SUBSCRIPTION_ID: "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+  ARM_TENANT_ID: "${{ secrets.AZURE_TENANT_ID }}"
+  ARM_USE_OIDC: true
+  REGISTRY_NAME: "cst8918acr"
+  IMAGE_NAME: "remix-weather"
+
+jobs:
+  build-and-push:
+    name: 'Build and Push Docker Image'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get ACR Login Server
+        id: acr-info
+        run: |
+          # Get ACR login server dynamically
+          ACR_LOGIN_SERVER=$(az acr list --query "[?contains(name, 'cst8918')].loginServer" -o tsv | head -1)
+          if [ -z "$ACR_LOGIN_SERVER" ]; then
+            echo "No ACR found with 'cst8918' in name"
+            exit 1
+          fi
+          echo "acr-login-server=$ACR_LOGIN_SERVER" >> $GITHUB_OUTPUT
+          echo "Found ACR: $ACR_LOGIN_SERVER"
+
+      - name: Login to Azure Container Registry
+        run: |
+          az acr login --name ${{ env.REGISTRY_NAME }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push Docker Image
+        run: |
+          # Get short commit SHA for tagging
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          
+          # Build Docker image with build args (optional - app builds without them)
+          docker build \
+            --tag ${{ steps.acr-info.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --tag ${{ steps.acr-info.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:${SHORT_SHA} \
+            --tag ${{ steps.acr-info.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:latest \
+            --build-arg WEATHER_API_KEY="${{ secrets.WEATHER_API_KEY }}" \
+            --file pulumi-app/Dockerfile \
+            pulumi-app/
+          
+          # Push all tags
+          docker push ${{ steps.acr-info.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ steps.acr-info.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:${SHORT_SHA}
+          docker push ${{ steps.acr-info.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:latest
+          
+          echo "✅ Successfully built and pushed Docker image with tags:"
+          echo "- Full SHA: ${{ github.sha }}"
+          echo "- Short SHA: ${SHORT_SHA}"
+          echo "- Latest: latest"
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const shortSha = "${{ github.sha }}".substring(0, 7);
+            const acrLoginServer = "${{ steps.acr-info.outputs.acr-login-server }}";
+            
+            const body = `## Docker Image Built and Pushed
+            
+            **Registry:** \`${acrLoginServer}\`
+            **Image:** \`${{ env.IMAGE_NAME }}\`
+            
+            **Available Tags:**
+            - \`${{ github.sha }}\` (full commit SHA)
+            - \`${shortSha}\` (short commit SHA)
+            - \`latest\`
+            
+            **Pull Command:**
+            \`\`\`bash
+            docker pull ${acrLoginServer}/${{ env.IMAGE_NAME }}:${shortSha}
+            \`\`\`
+            
+            **Image built from commit:** \`${{ github.sha }}\``;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Security Scan (Optional)
+        run: |
+          echo "Running basic security checks..."
+          # Check for exposed secrets in Dockerfile
+          if grep -i "password\|secret\|key" pulumi-app/Dockerfile; then
+            echo "⚠️  Warning: Potential secrets found in Dockerfile"
+          else
+            echo " No obvious secrets found in Dockerfile"
+          fi

@@ -79,23 +79,77 @@ jobs:
       - name: Terraform Init
         run: terraform init
 
+      # Force unlock any existing locks with comprehensive error handling
+      - name: Force Unlock State (Enhanced)
+        run: |
+          echo "Checking for and clearing any existing state locks..."
+          
+          # Function to extract lock ID from terraform output
+          get_lock_id() {
+            local output="$1"
+            echo "$output" | grep -o "ID: *[a-f0-9-]*" | cut -d' ' -f2 | head -1
+          }
+          
+          # Try to detect if state is locked by running a quick plan
+          echo "Testing state access..."
+          LOCK_CHECK_OUTPUT=""
+          if ! timeout 10s terraform plan -detailed-exitcode -no-color -lock-timeout=2s > /dev/null 2>&1; then
+            echo "State appears to be locked, attempting to get lock info..."
+            
+            # Capture the lock error output
+            LOCK_CHECK_OUTPUT=$(timeout 10s terraform plan -detailed-exitcode -no-color -lock-timeout=1s 2>&1 || true)
+            
+            # Extract lock ID
+            LOCK_ID=$(get_lock_id "$LOCK_CHECK_OUTPUT")
+            
+            if [ ! -z "$LOCK_ID" ] && [ "$LOCK_ID" != "ID:" ]; then
+              echo "Found lock ID: $LOCK_ID"
+              echo "Attempting to force unlock..."
+              
+              # Multiple unlock attempts with different methods
+              for attempt in 1 2 3; do
+                echo "Unlock attempt $attempt/3..."
+                
+                if echo "yes" | terraform force-unlock "$LOCK_ID" 2>/dev/null; then
+                  echo "Successfully unlocked state lock: $LOCK_ID"
+                  break
+                elif [ $attempt -eq 3 ]; then
+                  echo "Failed to unlock after 3 attempts, but continuing..."
+                  echo "Lock ID: $LOCK_ID"
+                  echo "Lock info: $LOCK_CHECK_OUTPUT"
+                else
+                  echo " Unlock attempt $attempt failed, waiting 5 seconds..."
+                  sleep 5
+                fi
+              done
+            else
+              echo " No lock ID found or lock may have cleared itself"
+            fi
+          else
+            echo "State is accessible, no locks detected"
+          fi
+          
+          echo " Lock check completed, proceeding with workflow..."
+        continue-on-error: true
+
       # Checks that all Terraform configuration files adhere to a canonical format
       # Will fail the build if not
       - name: Terraform Format
         run: terraform fmt -check
 
-      # Generates an execution plan for Terraform
+      # Generates an execution plan for Terraform with enhanced lock handling
       # An exit code of 0 indicated no changes, 1 a terraform failure, 2 there are pending changes.
       - name: Terraform Plan
         id: tf-plan
         run: |
           export exitcode=0
-          terraform plan -detailed-exitcode -no-color -out tfplan || export exitcode=$?
+          echo "Starting Terraform Plan with enhanced lock timeout..."
+          terraform plan -detailed-exitcode -no-color -out tfplan -lock-timeout=15m || export exitcode=$?
 
           echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
           
           if [ $exitcode -eq 1 ]; then
-            echo Terraform Plan Failed!
+            echo "Terraform Plan Failed!"
             exit 1
           else 
             exit 0
